@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 class BCMDocumentationRAGConfig(FunctionBaseConfig, name="bcm_documentation_rag"):
-    query: str = Field(description="Question about BCM operations, procedures, commands, or troubleshooting")
     docs_path: str = Field(default="examples/factory_reset/src/aiq_dgx_factory_reset/docs/bcm_admin_manual/",
                            description="Path to BCM documentation directory")
     offline_mode: bool = Field(default=True, description="Run in offline mode for testing")
@@ -48,8 +47,8 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, builder: Buil
             from langchain.text_splitter import RecursiveCharacterTextSplitter
             from langchain_community.document_loaders import DirectoryLoader
             from langchain_community.document_loaders import TextLoader
-            from langchain_community.embeddings import HuggingFaceEmbeddings
             from langchain_community.vectorstores import Chroma
+            from langchain_huggingface import HuggingFaceEmbeddings
 
             logger.info(f"Searching BCM docs for: {query}")
 
