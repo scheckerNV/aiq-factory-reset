@@ -14,7 +14,7 @@ functions:
 llms:
   bcm_expert_llm:
     _type: nim
-    model: meta/llama-3.1-70b-instruct
+    model: nvidia/llama-3.3-nemotron-super-49b-v1
     max_tokens: 4096
     temperature: 0.1
 
