@@ -1,4 +1,10 @@
 ###### Place new entries directly below this line! ######
+# DGX Factory Reset Project
+bcm_manual_full.md                    # Large source file (2.3MB) - can be regenerated
+*.pdf                                 # Original PDFs - too large for git
+examples/factory_reset/chroma_db/     # Vector database cache
+examples/factory_reset/embeddings/    # Embedding cache files
+examples/factory_reset/temp/          # Temporary processing files
 
 # auto-generated chainlit stuff
 chainlit.md
