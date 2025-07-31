@@ -1,0 +1,28 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools >= 64", "setuptools-scm>=8"]
+
+[tool.setuptools_scm]
+root = "../.."  # This points to aiq-factory-reset/ repo root
+
+[project]
+name = "aiq_dgx_factory_reset"
+dynamic = ["version"]
+dependencies = [
+  "aiqtoolkit[langchain]~=1.2",
+  "requests>=2.25.0",          # BCM API calls
+  "paramiko>=2.7.0",           # SSH connections
+  "chromadb>=0.4.0",           # RAG vector database
+  "beautifulsoup4>=4.9.0",     # Document parsing
+  "pandas>=2.0.0",             # Data processing
+]
+requires-python = ">=3.11,<3.13"
+description = "DGX Factory Reset Multi-Agent System"
+keywords = ["ai", "dgx", "bcm", "factory-reset", "nvidia"]
+classifiers = ["Programming Language :: Python"]
+
+[tool.uv.sources]
+aiqtoolkit = { path = "../..", editable = true }  # Changed: One more level up
+
+[project.entry-points.'aiq.components']
+aiq_dgx_factory_reset = "aiq_dgx_factory_reset.register"

@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+general:
+  use_uvloop: true
+
+functions:
+  # BCM Documentation RAG Tool
+  bcm_documentation_rag:
+    _type: bcm_documentation_rag
+    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/bcm_admin_manual/"
+    offline_mode: true
+
+llms:
+  bcm_expert_llm:
+    _type: nim
+    model: meta/llama-3.1-70b-instruct
+    max_tokens: 4096
+    temperature: 0.1
+
+# BCM Expert Agent Workflow
+workflow:
+  _type: react_agent
+  tool_names:
+    - bcm_documentation_rag
+  llm_name: bcm_expert_llm
+  verbose: true
+  parse_agent_response_max_retries: 3
