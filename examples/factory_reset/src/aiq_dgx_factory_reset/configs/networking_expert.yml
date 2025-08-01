@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+general:
+  use_uvloop: true
+
+functions:
+
+llms:
+  networking_expert_llm:
+    _type: nim
+    model_name: meta/llama-3.1-70b-instruct
+    max_tokens: 4096
+    temperature: 0.1
+
+# BCM Expert Agent Workflow
+workflow:
+  _type: react_agent
+  tool_names:
+    -
+  llm_name: networking_expert_llm
+  verbose: true
+  system_prompt: |
+    You are a DGX SuperPOD networking expert. CRITICAL RULES:
+
+    1.
+
+    Networking procedures typically involve:
+    -
