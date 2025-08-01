@@ -1,5 +1,7 @@
 ###### Place new entries directly below this line! ######
 # DGX Factory Reset Project
+examples/factory_reset/storage/
+examples/factory_reset/src/aiq_dgx_factory_reset/docs/*.pdf
 *.pdf                                 # Original PDFs - too large for git
 examples/factory_reset/chroma_db/     # Vector database cache
 examples/factory_reset/embeddings/    # Embedding cache files

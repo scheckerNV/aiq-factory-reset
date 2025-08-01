@@ -9,10 +9,13 @@ root = "../.."  # This points to aiq-factory-reset/ repo root
 name = "aiq_dgx_factory_reset"
 dynamic = ["version"]
 dependencies = [
-  "aiqtoolkit[langchain]~=1.2",
+  "aiqtoolkit~=1.2",
   "requests>=2.25.0",          # BCM API calls
   "paramiko>=2.7.0",           # SSH connections
-  "chromadb>=0.4.0",           # RAG vector database
+  "llama-index-core>=0.10.0",
+  "llama-index-llms-nvidia>=0.1.0",
+  "llama-index-embeddings-nvidia>=0.1.0",
+  "llama-parse>=0.4.0",
   "beautifulsoup4>=4.9.0",     # Document parsing
   "pandas>=2.0.0",             # Data processing
 ]
