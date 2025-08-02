@@ -8,7 +8,7 @@ functions:
   # BCM Documentation RAG Tool with LlamaParse and Multi-Agent Workflow
   bcm_documentation_rag:
     _type: bcm_documentation_rag
-    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/"
+    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
     persist_dir: "examples/factory_reset/storage/bcm_index"
     # nvidia_api_key: "your_nvidia_key"  # Or set NVIDIA_API_KEY env var
     # llama_cloud_api_key: "your_llama_key"  # Or set LLAMA_CLOUD_API_KEY env var
@@ -36,6 +36,14 @@ workflow:
     4. Present generated scripts clearly with proper formatting
     5. Always emphasize safety: review scripts before execution
     6. If the tool provides a bash script, include safety warnings
+
+    Helpful information:
+    - To reset a node, set installation mode to FULL for specific nodes (example for dgx-01) 'device use dgx-01', then
+    'set nextinstallmode FULL', and finally 'commit'.
+    - To add a node back to the BCM-managed network, first, ensure your head node has a network interface on the BMC
+    network: 'cmsh' then 'device interfaces basecm10'. Once the head node has access to the BMC network, you can add the
+    BMC interface to the node. Configure the BMC authentication credentials, and finally, once the BMC is properly
+    configured in BCM, you can use power management commands.
 
     The enhanced BCM tool:
     - Uses LlamaParse for superior PDF document processing

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class BCMDocumentationRAGConfig(FunctionBaseConfig, name="bcm_documentation_rag"):
-    docs_path: str = Field(default="examples/factory_reset/src/aiq_dgx_factory_reset/docs/",
+    docs_path: str = Field(default="examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert",
                            description="Path to BCM documentation directory")
     persist_dir: str = Field(default="examples/factory_reset/storage/bcm_index",
                              description="Directory to persist the vector index")
