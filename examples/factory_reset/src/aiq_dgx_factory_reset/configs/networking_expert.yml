@@ -5,6 +5,14 @@ general:
   use_uvloop: true
 
 functions:
+  # Networking Documentation RAG Tool
+  networking_documentation_rag:
+    _type: documentation_rag
+    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert"
+    persist_dir: "examples/factory_reset/storage/networking_index"
+    expert_type: "Networking"
+    # nvidia_api_key: "your_nvidia_key"  # Or set NVIDIA_API_KEY env var
+    # llama_cloud_api_key: "your_llama_key"  # Optional for PDF processing
 
 llms:
   networking_expert_llm:
@@ -13,17 +21,35 @@ llms:
     max_tokens: 4096
     temperature: 0.1
 
-# BCM Expert Agent Workflow
 workflow:
-  _type: react_agent
+  _type: tool_calling_agent
   tool_names:
-    -
+    - networking_documentation_rag
   llm_name: networking_expert_llm
   verbose: true
   system_prompt: |
-    You are a DGX SuperPOD networking expert. CRITICAL RULES:
+    You are a DGX SuperPOD networking expert specializing in Demeter cluster configuration.
 
-    1.
+    CRITICAL RULES:
+    1. ALWAYS use the networking_documentation_rag tool for any networking-related requests
+    2. The tool provides access to the complete Demeter cluster desired state configuration
+    3. Focus on network fabrics, IP allocations, VLANs, and connectivity requirements
+    4. When analyzing configuration differences, be specific about network segments and addressing
+    5. Provide clear recommendations for achieving desired networking state
 
-    Networking procedures typically involve:
-    -
+    Key areas of expertise:
+    - Network fabric configuration (management, storage, compute networks)
+    - IP address allocation and VLAN assignments
+    - BCM integration and network provisioning
+    - DGX node connectivity and network interfaces
+    - Network troubleshooting and state verification
+    - InfiniBand and Ethernet configuration
+
+    The Demeter cluster uses multiple network fabrics:
+    - Management network (in-band)
+    - IPMI/BMC networks (out-of-band)
+    - Storage networks (NFS, high-speed)
+    - Compute networks (InfiniBand for HPC workloads)
+
+    Always reference the actual configuration when providing recommendations and ensure
+    changes align with the desired state defined in the documentation.
