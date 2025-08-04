@@ -1,0 +1,1426 @@
+# Demeter DGX H100 BasePOD Cluster - Desired State Configuration
+# Week 1 MVP: Enterprise cluster infrastructure management
+
+metadata:
+  version: "1.0.0"
+  description: "Demeter DGX H100 BasePOD Cluster Desired State"
+  created: "2025-01-26"
+  environment: "production"
+  cluster_name: "demeter"
+  total_nodes: 31
+
+# ==============================================================================
+# CLUSTER CONFIGURATION
+# ==============================================================================
+cluster:
+  name: "demeter"
+  type: "DGX_BasePOD"
+  location: "data-center"
+
+  # BCM Configuration - assumes this stays the same for the life of the cluster
+  bcm:
+    enabled: true
+    shared_ip: "10.184.164.50"
+    head_nodes:
+      primary:
+        hostname: "demeter-mgmt-1"
+        ip: "10.184.164.51"
+        bmc_ip: "10.184.165.51"
+      secondary:
+        hostname: "demeter-mgmt-2"
+        ip: "10.184.164.52"
+        bmc_ip: "10.184.165.52"
+    domain: "demeter.local"
+    default_image: "default-image-kdump-nvidia-smi"
+
+# ==============================================================================
+# NETWORK FABRIC DEFINITIONS
+# ==============================================================================
+network_fabrics:
+  # Management Network (In-band)
+  management:
+    name: "managementnet"
+    aliases: ["internalnet"]
+    subnet: "10.184.164.0/24"
+    gateway: "10.184.164.1"
+    dns_servers: ["103.247.36.36", "103.247.37.37"]
+    vlan: 164
+    usable_range: "10.184.164.4-254"
+
+  # Out-of-Band Management (IPMI-1) - Control Plane Management
+  oob_management_1:
+    name: "oobmanagementnet"
+    aliases: ["ipminet1"]
+    subnet: "10.184.165.0/25"
+    gateway: "10.184.165.1"
+    dns_servers: ["103.247.36.36", "103.247.37.37"]
+    usable_range: "10.184.165.4-126"
+    description: "IPMI-1 - Control Plane Management"
+
+  # Out-of-Band Management (IPMI-2) - DGX Management
+  oob_management_2:
+    name: "oobmanagementnet2"
+    aliases: ["ipminet2"]
+    subnet: "10.184.165.128/25"
+    gateway: "10.184.165.129"
+    dns_servers: ["103.247.36.36", "103.247.37.37"]
+    usable_range: "10.184.165.131-254"
+    description: "IPMI-2 - DGX Management"
+
+  # Compute Fabric (InfiniBand)
+  compute_fabric:
+    name: "computenet"
+    aliases: ["dgxnet"]
+    subnet: "100.126.0.0/16"
+    gateway: null
+    usable_range: "100.126.0.1-255.254"
+    fabric_type: "infiniband"
+    description: "High-performance compute interconnect"
+
+  # Storage Fabric (InfiniBand)
+  storage_fabric:
+    name: "storagenet"
+    subnet: "100.127.0.0/16"
+    gateway: null
+    usable_range: "100.127.0.1-255.254"
+    fabric_type: "infiniband"
+    description: "Storage interconnect"
+
+# ==============================================================================
+# DGX NODE DEFINITIONS (31 nodes)
+# ==============================================================================
+# NOTE: Storage fabric interfaces not specified in source spreadsheet
+# DGX nodes may have additional InfiniBand interfaces for storage connectivity
+# to the 100.127.0.0/16 storage fabric that would need to be defined
+nodes:
+  # Standard references for all DGX nodes
+  dgx_power: &dgx_power
+    desired_state: "on"
+    power_policy: "restore_previous"
+    auto_power_on: true
+
+  dgx_firmware: &dgx_firmware
+    host_bios: "01.06.01"
+    host_bmc: "24.11.05"
+    erot_bios: "00.04.0052.0000_n00"
+    erot_bmc: "00.04.0052.0000_n00"
+    gpu_firmware: "97.00.4C.00.1C"
+    gpu_inforom: "G525.0220.00.03"
+    cx7_nic_firmware: "32.42.1000"
+    cx7_card_firmware: "28.42.1000"
+    auto_update: false
+    update_schedule: "maintenance_window"
+
+  dgx_software: &dgx_software
+    os_image: "dgx-os-5.3.0"
+    kernel_version: "5.4.0-150-generic"
+    nvidia_driver: "latest"
+    cuda_version: "12.0"
+    container_runtime: "docker"
+    bcm_enrolled: true
+    monitoring_enabled: true
+
+  dgx_health: &dgx_health
+    temperature_thresholds:
+      gpu_critical: 85
+      gpu_warning: 80
+      cpu_critical: 85
+      cpu_warning: 75
+    power_thresholds:
+      max_power_watts: 10000
+      warning_power_watts: 9000
+    memory_thresholds:
+      memory_usage_critical: 95
+      memory_usage_warning: 85
+
+  # DGX H100 Nodes (dgx-01 through dgx-31)
+  dgx-01:
+    hostname: "dgx-01"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_01"
+    networks:
+      management:
+        ip: "10.184.164.90"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.150"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.90"
+        ibp154s0: "100.126.1.90"
+        ibp206s0: "100.126.2.90"
+        ibp192s0: "100.126.3.90"
+        ibp79s0: "100.126.4.90"
+        ibp64s0: "100.126.5.90"
+        ibp94s0: "100.126.6.90"
+        ibp24s0: "100.126.7.90"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-02:
+    hostname: "dgx-02"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_02"
+    networks:
+      management:
+        ip: "10.184.164.91"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.151"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.91"
+        ibp154s0: "100.126.1.91"
+        ibp206s0: "100.126.2.91"
+        ibp192s0: "100.126.3.91"
+        ibp79s0: "100.126.4.91"
+        ibp64s0: "100.126.5.91"
+        ibp94s0: "100.126.6.91"
+        ibp24s0: "100.126.7.91"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-03:
+    hostname: "dgx-03"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_03"
+    networks:
+      management:
+        ip: "10.184.164.92"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.152"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.92"
+        ibp154s0: "100.126.1.92"
+        ibp206s0: "100.126.2.92"
+        ibp192s0: "100.126.3.92"
+        ibp79s0: "100.126.4.92"
+        ibp64s0: "100.126.5.92"
+        ibp94s0: "100.126.6.92"
+        ibp24s0: "100.126.7.92"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-04:
+    hostname: "dgx-04"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_04"
+    networks:
+      management:
+        ip: "10.184.164.93"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.153"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.93"
+        ibp154s0: "100.126.1.93"
+        ibp206s0: "100.126.2.93"
+        ibp192s0: "100.126.3.93"
+        ibp79s0: "100.126.4.93"
+        ibp64s0: "100.126.5.93"
+        ibp94s0: "100.126.6.93"
+        ibp24s0: "100.126.7.93"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-05:
+    hostname: "dgx-05"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_05"
+    networks:
+      management:
+        ip: "10.184.164.94"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.154"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.94"
+        ibp154s0: "100.126.1.94"
+        ibp206s0: "100.126.2.94"
+        ibp192s0: "100.126.3.94"
+        ibp79s0: "100.126.4.94"
+        ibp64s0: "100.126.5.94"
+        ibp94s0: "100.126.6.94"
+        ibp24s0: "100.126.7.94"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-06:
+    hostname: "dgx-06"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_06"
+    networks:
+      management:
+        ip: "10.184.164.95"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.155"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.95"
+        ibp154s0: "100.126.1.95"
+        ibp206s0: "100.126.2.95"
+        ibp192s0: "100.126.3.95"
+        ibp79s0: "100.126.4.95"
+        ibp64s0: "100.126.5.95"
+        ibp94s0: "100.126.6.95"
+        ibp24s0: "100.126.7.95"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-07:
+    hostname: "dgx-07"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_07"
+    networks:
+      management:
+        ip: "10.184.164.96"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.156"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.96"
+        ibp154s0: "100.126.1.96"
+        ibp206s0: "100.126.2.96"
+        ibp192s0: "100.126.3.96"
+        ibp79s0: "100.126.4.96"
+        ibp64s0: "100.126.5.96"
+        ibp94s0: "100.126.6.96"
+        ibp24s0: "100.126.7.96"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-08:
+    hostname: "dgx-08"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_08"
+    networks:
+      management:
+        ip: "10.184.164.97"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.157"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.97"
+        ibp154s0: "100.126.1.97"
+        ibp206s0: "100.126.2.97"
+        ibp192s0: "100.126.3.97"
+        ibp79s0: "100.126.4.97"
+        ibp64s0: "100.126.5.97"
+        ibp94s0: "100.126.6.97"
+        ibp24s0: "100.126.7.97"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-09:
+    hostname: "dgx-09"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_09"
+    networks:
+      management:
+        ip: "10.184.164.98"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.158"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.98"
+        ibp154s0: "100.126.1.98"
+        ibp206s0: "100.126.2.98"
+        ibp192s0: "100.126.3.98"
+        ibp79s0: "100.126.4.98"
+        ibp64s0: "100.126.5.98"
+        ibp94s0: "100.126.6.98"
+        ibp24s0: "100.126.7.98"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-10:
+    hostname: "dgx-10"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_10"
+    networks:
+      management:
+        ip: "10.184.164.99"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.159"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.99"
+        ibp154s0: "100.126.1.99"
+        ibp206s0: "100.126.2.99"
+        ibp192s0: "100.126.3.99"
+        ibp79s0: "100.126.4.99"
+        ibp64s0: "100.126.5.99"
+        ibp94s0: "100.126.6.99"
+        ibp24s0: "100.126.7.99"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-11:
+    hostname: "dgx-11"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_11"
+    networks:
+      management:
+        ip: "10.184.164.100"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.160"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.100"
+        ibp154s0: "100.126.1.100"
+        ibp206s0: "100.126.2.100"
+        ibp192s0: "100.126.3.100"
+        ibp79s0: "100.126.4.100"
+        ibp64s0: "100.126.5.100"
+        ibp94s0: "100.126.6.100"
+        ibp24s0: "100.126.7.100"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-12:
+    hostname: "dgx-12"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_12"
+    networks:
+      management:
+        ip: "10.184.164.101"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.161"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.101"
+        ibp154s0: "100.126.1.101"
+        ibp206s0: "100.126.2.101"
+        ibp192s0: "100.126.3.101"
+        ibp79s0: "100.126.4.101"
+        ibp64s0: "100.126.5.101"
+        ibp94s0: "100.126.6.101"
+        ibp24s0: "100.126.7.101"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-13:
+    hostname: "dgx-13"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_13"
+    networks:
+      management:
+        ip: "10.184.164.102"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.162"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.102"
+        ibp154s0: "100.126.1.102"
+        ibp206s0: "100.126.2.102"
+        ibp192s0: "100.126.3.102"
+        ibp79s0: "100.126.4.102"
+        ibp64s0: "100.126.5.102"
+        ibp94s0: "100.126.6.102"
+        ibp24s0: "100.126.7.102"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-14:
+    hostname: "dgx-14"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_14"
+    networks:
+      management:
+        ip: "10.184.164.103"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.163"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.103"
+        ibp154s0: "100.126.1.103"
+        ibp206s0: "100.126.2.103"
+        ibp192s0: "100.126.3.103"
+        ibp79s0: "100.126.4.103"
+        ibp64s0: "100.126.5.103"
+        ibp94s0: "100.126.6.103"
+        ibp24s0: "100.126.7.103"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-15:
+    hostname: "dgx-15"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_15"
+    networks:
+      management:
+        ip: "10.184.164.104"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.164"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.104"
+        ibp154s0: "100.126.1.104"
+        ibp206s0: "100.126.2.104"
+        ibp192s0: "100.126.3.104"
+        ibp79s0: "100.126.4.104"
+        ibp64s0: "100.126.5.104"
+        ibp94s0: "100.126.6.104"
+        ibp24s0: "100.126.7.104"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-16:
+    hostname: "dgx-16"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_16"
+    networks:
+      management:
+        ip: "10.184.164.105"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.165"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.105"
+        ibp154s0: "100.126.1.105"
+        ibp206s0: "100.126.2.105"
+        ibp192s0: "100.126.3.105"
+        ibp79s0: "100.126.4.105"
+        ibp64s0: "100.126.5.105"
+        ibp94s0: "100.126.6.105"
+        ibp24s0: "100.126.7.105"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-17:
+    hostname: "dgx-17"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_17"
+    networks:
+      management:
+        ip: "10.184.164.106"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.166"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.106"
+        ibp154s0: "100.126.1.106"
+        ibp206s0: "100.126.2.106"
+        ibp192s0: "100.126.3.106"
+        ibp79s0: "100.126.4.106"
+        ibp64s0: "100.126.5.106"
+        ibp94s0: "100.126.6.106"
+        ibp24s0: "100.126.7.106"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-18:
+    hostname: "dgx-18"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_18"
+    networks:
+      management:
+        ip: "10.184.164.107"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.167"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.107"
+        ibp154s0: "100.126.1.107"
+        ibp206s0: "100.126.2.107"
+        ibp192s0: "100.126.3.107"
+        ibp79s0: "100.126.4.107"
+        ibp64s0: "100.126.5.107"
+        ibp94s0: "100.126.6.107"
+        ibp24s0: "100.126.7.107"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-19:
+    hostname: "dgx-19"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_19"
+    networks:
+      management:
+        ip: "10.184.164.108"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.168"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.108"
+        ibp154s0: "100.126.1.108"
+        ibp206s0: "100.126.2.108"
+        ibp192s0: "100.126.3.108"
+        ibp79s0: "100.126.4.108"
+        ibp64s0: "100.126.5.108"
+        ibp94s0: "100.126.6.108"
+        ibp24s0: "100.126.7.108"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-20:
+    hostname: "dgx-20"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_20"
+    networks:
+      management:
+        ip: "10.184.164.109"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.169"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.109"
+        ibp154s0: "100.126.1.109"
+        ibp206s0: "100.126.2.109"
+        ibp192s0: "100.126.3.109"
+        ibp79s0: "100.126.4.109"
+        ibp64s0: "100.126.5.109"
+        ibp94s0: "100.126.6.109"
+        ibp24s0: "100.126.7.109"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-21:
+    hostname: "dgx-21"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_21"
+    networks:
+      management:
+        ip: "10.184.164.110"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.170"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.110"
+        ibp154s0: "100.126.1.110"
+        ibp206s0: "100.126.2.110"
+        ibp192s0: "100.126.3.110"
+        ibp79s0: "100.126.4.110"
+        ibp64s0: "100.126.5.110"
+        ibp94s0: "100.126.6.110"
+        ibp24s0: "100.126.7.110"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-22:
+    hostname: "dgx-22"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_22"
+    networks:
+      management:
+        ip: "10.184.164.111"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.171"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.111"
+        ibp154s0: "100.126.1.111"
+        ibp206s0: "100.126.2.111"
+        ibp192s0: "100.126.3.111"
+        ibp79s0: "100.126.4.111"
+        ibp64s0: "100.126.5.111"
+        ibp94s0: "100.126.6.111"
+        ibp24s0: "100.126.7.111"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-23:
+    hostname: "dgx-23"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_23"
+    networks:
+      management:
+        ip: "10.184.164.112"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.172"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.112"
+        ibp154s0: "100.126.1.112"
+        ibp206s0: "100.126.2.112"
+        ibp192s0: "100.126.3.112"
+        ibp79s0: "100.126.4.112"
+        ibp64s0: "100.126.5.112"
+        ibp94s0: "100.126.6.112"
+        ibp24s0: "100.126.7.112"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-24:
+    hostname: "dgx-24"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_24"
+    networks:
+      management:
+        ip: "10.184.164.113"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.173"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.113"
+        ibp154s0: "100.126.1.113"
+        ibp206s0: "100.126.2.113"
+        ibp192s0: "100.126.3.113"
+        ibp79s0: "100.126.4.113"
+        ibp64s0: "100.126.5.113"
+        ibp94s0: "100.126.6.113"
+        ibp24s0: "100.126.7.113"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-25:
+    hostname: "dgx-25"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_25"
+    networks:
+      management:
+        ip: "10.184.164.114"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.174"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.114"
+        ibp154s0: "100.126.1.114"
+        ibp206s0: "100.126.2.114"
+        ibp192s0: "100.126.3.114"
+        ibp79s0: "100.126.4.114"
+        ibp64s0: "100.126.5.114"
+        ibp94s0: "100.126.6.114"
+        ibp24s0: "100.126.7.114"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-26:
+    hostname: "dgx-26"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_26"
+    networks:
+      management:
+        ip: "10.184.164.115"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.175"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.115"
+        ibp154s0: "100.126.1.115"
+        ibp206s0: "100.126.2.115"
+        ibp192s0: "100.126.3.115"
+        ibp79s0: "100.126.4.115"
+        ibp64s0: "100.126.5.115"
+        ibp94s0: "100.126.6.115"
+        ibp24s0: "100.126.7.115"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-27:
+    hostname: "dgx-27"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_27"
+    networks:
+      management:
+        ip: "10.184.164.116"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.176"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.116"
+        ibp154s0: "100.126.1.116"
+        ibp206s0: "100.126.2.116"
+        ibp192s0: "100.126.3.116"
+        ibp79s0: "100.126.4.116"
+        ibp64s0: "100.126.5.116"
+        ibp94s0: "100.126.6.116"
+        ibp24s0: "100.126.7.116"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-28:
+    hostname: "dgx-28"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_28"
+    networks:
+      management:
+        ip: "10.184.164.117"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.177"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.117"
+        ibp154s0: "100.126.1.117"
+        ibp206s0: "100.126.2.117"
+        ibp192s0: "100.126.3.117"
+        ibp79s0: "100.126.4.117"
+        ibp64s0: "100.126.5.117"
+        ibp94s0: "100.126.6.117"
+        ibp24s0: "100.126.7.117"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-29:
+    hostname: "dgx-29"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_29"
+    networks:
+      management:
+        ip: "10.184.164.118"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.178"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.118"
+        ibp154s0: "100.126.1.118"
+        ibp206s0: "100.126.2.118"
+        ibp192s0: "100.126.3.118"
+        ibp79s0: "100.126.4.118"
+        ibp64s0: "100.126.5.118"
+        ibp94s0: "100.126.6.118"
+        ibp24s0: "100.126.7.118"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-30:
+    hostname: "dgx-30"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_30"
+    networks:
+      management:
+        ip: "10.184.164.119"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.179"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.119"
+        ibp154s0: "100.126.1.119"
+        ibp206s0: "100.126.2.119"
+        ibp192s0: "100.126.3.119"
+        ibp79s0: "100.126.4.119"
+        ibp64s0: "100.126.5.119"
+        ibp94s0: "100.126.6.119"
+        ibp24s0: "100.126.7.119"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+  dgx-31:
+    hostname: "dgx-31"
+    model: "DGX-H100"
+    serial_number: "TBD_SERIAL_31"
+    networks:
+      management:
+        ip: "10.184.164.120"
+        gateway: "10.184.164.1"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      oob_management:
+        ip: "10.184.165.180"
+        gateway: "10.184.165.129"
+        dns: ["103.247.36.36", "103.247.37.37"]
+      compute_fabric:
+        ibp220s0: "100.126.0.120"
+        ibp154s0: "100.126.1.120"
+        ibp206s0: "100.126.2.120"
+        ibp192s0: "100.126.3.120"
+        ibp79s0: "100.126.4.120"
+        ibp64s0: "100.126.5.120"
+        ibp94s0: "100.126.6.120"
+        ibp24s0: "100.126.7.120"
+    power: *dgx_power
+    firmware: *dgx_firmware
+    software: *dgx_software
+    health: *dgx_health
+
+# ==============================================================================
+# INFRASTRUCTURE COMPONENTS
+# ==============================================================================
+infrastructure:
+  # Management Nodes
+  management_nodes:
+    # Slurm Nodes
+    slogin-01:
+      hostname: "slogin-01"
+      ip: "10.184.164.53"
+      bmc_ip: "10.184.165.53"
+      role: "slurm_login"
+
+    slogin-02:
+      hostname: "slogin-02"
+      ip: "10.184.164.54"
+      bmc_ip: "10.184.165.54"
+      role: "slurm_login"
+
+    # Kubernetes Nodes
+    knode-01:
+      hostname: "knode-01"
+      ip: "10.184.164.55"
+      bmc_ip: "10.184.165.55"
+      role: "kubernetes_node"
+
+    knode-02:
+      hostname: "knode-02"
+      ip: "10.184.164.56"
+      bmc_ip: "10.184.165.56"
+      role: "kubernetes_node"
+
+    knode-03:
+      hostname: "knode-03"
+      ip: "10.184.164.57"
+      bmc_ip: "10.184.165.57"
+      role: "kubernetes_node"
+
+    # Run:ai Nodes
+    runai-01:
+      hostname: "runai-01"
+      ip: "10.184.164.58"
+      bmc_ip: "10.184.165.58"
+      role: "runai_node"
+
+    runai-02:
+      hostname: "runai-02"
+      ip: "10.184.164.59"
+      bmc_ip: "10.184.165.59"
+      role: "runai_node"
+
+    # Additional Management
+    kvm-01:
+      hostname: "kvm-01"
+      bmc_ip: "10.184.165.181"
+      role: "kvm_hypervisor"
+
+    console-01:
+      hostname: "console-01"
+      bmc_ip: "10.184.165.182"
+      role: "console_server"
+
+    mgmt-05:
+      hostname: "mgmt-05"
+      bmc_ip: "10.184.165.55"
+      role: "management"
+
+  # Storage Systems
+  storage:
+    ddn_infinia:
+      count: 10
+      nodes:
+        infinia-01:
+          hostname: "rl-ddn-infinia-01"
+          bmc_ip: "10.184.165.30"
+          bmc_ip_2: "10.184.165.130"
+          mgmt_ip: "10.184.164.30"
+          additional_mgmt_ip: "10.184.164.40"
+          storage_ips: ["100.127.0.30", "100.127.1.30"]
+
+        infinia-02:
+          hostname: "rl-ddn-infinia-02"
+          bmc_ip: "10.184.165.31"
+          bmc_ip_2: "10.184.165.131"
+          mgmt_ip: "10.184.164.31"
+          additional_mgmt_ip: "10.184.164.41"
+          storage_ips: ["100.127.0.31", "100.127.1.31"]
+
+        infinia-03:
+          hostname: "rl-ddn-infinia-03"
+          bmc_ip: "10.184.165.32"
+          bmc_ip_2: "10.184.165.132"
+          mgmt_ip: "10.184.164.32"
+          additional_mgmt_ip: "10.184.164.42"
+          storage_ips: ["100.127.0.32", "100.127.1.32"]
+
+        infinia-04:
+          hostname: "rl-ddn-infinia-04"
+          bmc_ip: "10.184.165.33"
+          bmc_ip_2: "10.184.165.133"
+          mgmt_ip: "10.184.164.33"
+          additional_mgmt_ip: "10.184.164.43"
+          storage_ips: ["100.127.0.33", "100.127.1.33"]
+
+        infinia-05:
+          hostname: "rl-ddn-infinia-05"
+          bmc_ip: "10.184.165.34"
+          bmc_ip_2: "10.184.165.134"
+          mgmt_ip: "10.184.164.34"
+          additional_mgmt_ip: "10.184.164.44"
+          storage_ips: ["100.127.0.34", "100.127.1.34"]
+
+        infinia-06:
+          hostname: "rl-ddn-infinia-06"
+          bmc_ip: "10.184.165.35"
+          bmc_ip_2: "10.184.165.135"
+          mgmt_ip: "10.184.164.35"
+          additional_mgmt_ip: "10.184.164.45"
+          storage_ips: ["100.127.0.35", "100.127.1.35"]
+
+        infinia-07:
+          hostname: "rl-ddn-infinia-07"
+          bmc_ip: "10.184.165.36"
+          bmc_ip_2: "10.184.165.136"
+          mgmt_ip: "10.184.164.36"
+          additional_mgmt_ip: "10.184.164.46"
+          storage_ips: ["100.127.0.36", "100.127.1.36"]
+
+        infinia-08:
+          hostname: "rl-ddn-infinia-08"
+          bmc_ip: "10.184.165.37"
+          bmc_ip_2: "10.184.165.137"
+          mgmt_ip: "10.184.164.37"
+          additional_mgmt_ip: "10.184.164.47"
+          storage_ips: ["100.127.0.37", "100.127.1.37"]
+
+        infinia-09:
+          hostname: "rl-ddn-infinia-09"
+          bmc_ip: "10.184.165.38"
+          bmc_ip_2: "10.184.165.138"
+          mgmt_ip: "10.184.164.38"
+          additional_mgmt_ip: "10.184.164.48"
+          storage_ips: ["100.127.0.38", "100.127.1.38"]
+
+        infinia-10:
+          hostname: "rl-ddn-infinia-10"
+          bmc_ip: "10.184.165.39"
+          bmc_ip_2: "10.184.165.139"
+          mgmt_ip: "10.184.164.39"
+          additional_mgmt_ip: "10.184.164.49"
+          storage_ips: ["100.127.0.39", "100.127.1.39"]
+
+    # DDN Controller Nodes
+    ddn_controllers:
+      ddn-01-0:
+        bmc_ip: "10.184.165.40"
+        controller_ip: "10.184.165.200"
+        vm_ips: ["10.184.165.206", "10.184.165.207"]
+
+      ddn-01-1:
+        bmc_ip: "10.184.165.41"
+        controller_ip: "10.184.165.201"
+        vm_ips: ["10.184.165.208", "10.184.165.209"]
+
+      ddn-02-0:
+        bmc_ip: "10.184.165.42"
+        controller_ip: "10.184.165.202"
+        vm_ips: ["10.184.165.210", "10.184.165.211"]
+
+      ddn-02-1:
+        bmc_ip: "10.184.165.43"
+        controller_ip: "10.184.165.203"
+        vm_ips: ["10.184.165.212", "10.184.165.213"]
+
+      ddn-03-0:
+        bmc_ip: "10.184.165.44"
+        controller_ip: "10.184.165.204"
+        vm_ips: ["10.184.165.214", "10.184.165.215"]
+
+      ddn-03-1:
+        bmc_ip: "10.184.165.45"
+        controller_ip: "10.184.164.205"
+        vm_ips: ["10.184.165.216", "10.184.165.217"]
+        floating_ip: "10.184.165.218"
+
+    # NFS Server
+    nfs_server:
+      hostname: "nfs"
+      bmc_ip: "10.184.165.141"
+      mgmt_ip: "10.184.164.41"
+      gateway: "10.184.165.1"
+      dns: ["103.247.36.36", "103.247.37.37"]
+
+  # Network Infrastructure
+  network_switches:
+    compute_leaf:
+      count: 8
+      switches:
+        CL-01:
+          hostname: "CL-01"
+          bmc_ip: "10.184.165.60"
+          type: "compute_leaf"
+        CL-02:
+          hostname: "CL-02"
+          bmc_ip: "10.184.165.61"
+          type: "compute_leaf"
+        CL-03:
+          hostname: "CL-03"
+          bmc_ip: "10.184.165.62"
+          type: "compute_leaf"
+        CL-04:
+          hostname: "CL-04"
+          bmc_ip: "10.184.165.63"
+          type: "compute_leaf"
+        CL-05:
+          hostname: "CL-05"
+          bmc_ip: "10.184.165.64"
+          type: "compute_leaf"
+        CL-06:
+          hostname: "CL-06"
+          bmc_ip: "10.184.165.65"
+          type: "compute_leaf"
+        CL-07:
+          hostname: "CL-07"
+          bmc_ip: "10.184.165.66"
+          type: "compute_leaf"
+        CL-08:
+          hostname: "CL-08"
+          bmc_ip: "10.184.165.67"
+          type: "compute_leaf"
+
+    compute_spine:
+      count: 4
+      switches:
+        CS-01:
+          hostname: "CS-01"
+          bmc_ip: "10.184.165.68"
+          type: "compute_spine"
+        CS-02:
+          hostname: "CS-02"
+          bmc_ip: "10.184.165.69"
+          type: "compute_spine"
+        CS-03:
+          hostname: "CS-03"
+          bmc_ip: "10.184.165.70"
+          type: "compute_spine"
+        CS-04:
+          hostname: "CS-04"
+          bmc_ip: "10.184.165.71"
+          type: "compute_spine"
+
+    storage_switches:
+      SL-01:
+        hostname: "SL-01"
+        bmc_ip: "10.184.165.75"
+        type: "storage_leaf"
+      SS-02:
+        hostname: "SS-02"
+        bmc_ip: "10.184.165.76"
+        type: "storage_switch"
+      SS-01:
+        hostname: "SS-01"
+        bmc_ip: "10.184.165.77"
+        type: "storage_switch"
+
+  # UFM Management
+  ufm_systems:
+    compute_ufm:
+      virtual_ip: "10.184.165.226"
+      nodes:
+        ufm-c-1:
+          hostname: "UFM-C-1"
+          ip: "10.184.165.222"
+          web_interface: "https://10.184.165.222/ufm_web"
+          credentials_ref: "ufm_compute_creds"
+          username: "root"
+          password_ref: "Buynvidia2025!"
+        ufm-c-2:
+          hostname: "UFM-C-2"
+          ip: "10.184.165.223"
+
+    storage_ufm:
+      virtual_ip: "10.184.165.225"
+      nodes:
+        ufm-s-1:
+          hostname: "UFM-S-1"
+          ip: "10.184.165.220"
+        ufm-s-2:
+          hostname: "UFM-S-2"
+          ip: "10.184.165.221"
+
+# ==============================================================================
+# CLUSTER-WIDE POLICIES
+# ==============================================================================
+policies:
+  # Firmware Update Strategy
+  firmware_updates:
+    strategy: "rolling"
+    max_concurrent_nodes: 2
+    batch_size: 4
+    inter_batch_delay: "30m"
+    rollback_on_failure: true
+    maintenance_windows:
+      - day: "saturday"
+        start_time: "02:00"
+        duration_hours: 6
+
+  # Factory Reset Policies
+  factory_reset:
+    triggers:
+      - "unrecoverable_boot_failure"
+      - "corrupted_filesystem"
+      - "firmware_corruption"
+      - "manual_request"
+    safety_checks:
+      - "verify_bcm_enrollment"
+      - "backup_critical_data"
+      - "confirm_network_config"
+    max_concurrent_resets: 1
+
+  # Health Monitoring
+  monitoring:
+    health_check_interval: "60s"
+    cluster_health_threshold: 0.95
+    node_isolation_threshold: 3
+    alert_escalation_time: "15m"
+
+  # Network Policies
+  network:
+    infiniband:
+      fabric_manager_enabled: true
+      auto_port_configuration: true
+      link_monitoring: true
+      error_threshold: 0.001
+    ethernet:
+      spanning_tree_enabled: true
+      vlan_isolation: true
+
+# ==============================================================================
+# AUTOMATION WORKFLOWS
+# ==============================================================================
+automation:
+  # Node Lifecycle Management
+  node_lifecycle:
+    provision:
+      - "power_on"
+      - "pxe_boot"
+      - "os_install"
+      - "driver_install"
+      - "bcm_enroll"
+      - "health_check"
+
+    factory_reset:
+      - "assess_node_state"
+      - "backup_configuration"
+      - "bcm_category_reset"
+      - "verify_provisioning"
+      - "network_configuration"
+      - "health_validation"
+
+  # Cluster Operations
+  cluster_operations:
+    rolling_update:
+      - "select_batch"
+      - "drain_workloads"
+      - "update_firmware"
+      - "reboot_nodes"
+      - "validate_cluster"
+      - "proceed_next_batch"
+
+# ==============================================================================
+# SECURITY CONFIGURATION
+# ==============================================================================
+security:
+  authentication:
+    method: "kerberos"
+    domain: "demeter.local"
+    certificate_authority: "internal_ca"
+
+  access_control:
+    admin_groups:
+      - "demeter_admins"
+      - "datacenter_ops"
+    read_only_groups:
+      - "demeter_users"
+      - "monitoring_team"
+
+  network_security:
+    fabric_isolation: true
+    encrypted_management: true
+    ipmi_access_control: true
+
+  audit:
+    enabled: true
+    retention_days: 180
+    log_level: "info"
+    compliance_standard: "enterprise"
+
+# ==============================================================================
+# CREDENTIALS REFERENCES
+# ==============================================================================
+credentials:
+  bcm_admin:
+    type: "vault_reference"
+    vault_path: "secret/demeter/bcm_admin"
+
+  node_bmc:
+    type: "vault_reference"
+    vault_path: "secret/demeter/node_bmc"
+
+  ufm_compute_creds:
+    type: "vault_reference"
+    vault_path: "secret/demeter/ufm_compute"
+    username: "root"
+
+  switch_management:
+    type: "vault_reference"
+    vault_path: "secret/demeter/switch_mgmt"
+
+# ==============================================================================
+# OPERATIONAL PROCEDURES
+# ==============================================================================
+procedures:
+  emergency_shutdown:
+    trigger_conditions:
+      - "facility_power_loss"
+      - "cooling_system_failure"
+      - "security_incident"
+    shutdown_order:
+      1: "user_workloads"
+      2: "storage_systems"
+      3: "compute_nodes"
+      4: "network_infrastructure"
+      5: "management_systems"
+
+  disaster_recovery:
+    rpo_target: "1h"
+    rto_target: "4h"
+    backup_systems:
+      - "bcm_configuration"
+      - "user_data"
+      - "system_configurations"
+
+  capacity_planning:
+    monitoring_metrics:
+      - "node_utilization"
+      - "network_bandwidth"
+      - "storage_capacity"
+      - "power_consumption"
+    scaling_triggers:
+      - utilization: "> 80%"
+        duration: "7d"
+        action: "capacity_expansion"
