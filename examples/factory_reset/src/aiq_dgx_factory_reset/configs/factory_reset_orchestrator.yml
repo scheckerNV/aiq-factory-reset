@@ -5,16 +5,15 @@ general:
   use_uvloop: true
 
 functions:
-  # Networking Expert
-  networking_expert:
-    _type: documentation_rag
+  # Networking Tool (LangChain compatible)
+  networking_tool:
+    _type: networking_tool
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert"
     persist_dir: "examples/factory_reset/storage/networking_index"
-    expert_type: "Networking"
 
-  # BCM Expert
-  bcm_expert:
-    _type: bcm_documentation_rag
+  # BCM Tool (LangChain compatible)
+  bcm_tool:
+    _type: bcm_tool
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
     persist_dir: "examples/factory_reset/storage/bcm_index"
 
@@ -26,47 +25,7 @@ llms:
     temperature: 0.0
 
 workflow:
-  _type: tool_calling_agent
-  tool_names:
-    - networking_expert
-    - bcm_expert
-  llm_name: orchestrator_llm
-  verbose: true
-  max_iterations: 3
-  handle_tool_errors: true
-  system_prompt: |
-    You are a DGX SuperPOD Factory Reset Orchestrator. You coordinate specialized experts to perform complete cluster resets.
-
-    **CRITICAL: EXACT TOOL CALLING FORMAT REQUIRED**
-
-    You MUST use this EXACT format for ALL function calls:
-    ```
-    {"tool_calls": [{"id": "call_id", "type": "function", "function": {"name": "function_name", "arguments": "{\"param\": \"value\"}"}}]}
-    ```
-
-    **NEVER use these formats:**
-    - <|python_tag|><function...>
-    - <function>...</function>
-    - Any XML-like syntax
-    - Any python tag syntax
-
-    **WORKFLOW STEPS:**
-    1. Call networking_expert with proper JSON tool call format
-    2. Wait for complete response
-    3. Call bcm_expert with proper JSON tool call format (same as step 1)
-    4. Synthesize both responses
-
-    **AVAILABLE FUNCTIONS:**
-    - networking_expert: Analyzes Demeter cluster networking requirements
-    - bcm_expert: Generates BCM commands based on networking context
-
-    **EXAMPLE SEQUENCE:**
-    User: "Reset networking for dgx-01"
-
-    First call exactly like this:
-    networking_expert("What are the network requirements for dgx-01 in Demeter?")
-
-    Second call exactly like this:
-    bcm_expert("Generate BCM commands for dgx-01 based on: [networking results]")
-
-    Use the SAME calling format for BOTH functions.
+  _type: factory_reset_workflow
+  llm: orchestrator_llm
+  networking_tool: networking_tool
+  bcm_tool: bcm_tool
