@@ -97,17 +97,30 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                 pdf_files = list(docs_path_obj.glob("*.pdf"))
                 if pdf_files:
                     logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
+                    # new code
+                    # In your register.py, around line 100, replace the PDF processing with:
                     parser = LlamaParse(verbose=True)
                     for pdf_file in pdf_files:
                         try:
-                            pdf_docs = parser.load_data(str(pdf_file))
+                            logger.info("Processing %s individually...", pdf_file.name)
+
+                            # Create a fresh parser instance for each file
+                            file_parser = LlamaParse(verbose=True)
+                            pdf_docs = file_parser.load_data(str(pdf_file))
+
                             for doc in pdf_docs:
                                 doc.metadata["source"] = str(pdf_file)
                                 doc.metadata["file_name"] = pdf_file.name
+
                             documents.extend(pdf_docs)
-                            logger.info("Successfully processed %s", pdf_file.name)
+                            logger.info("Successfully processed %s (%d documents)", pdf_file.name, len(pdf_docs))
+
+                            # Clean up
+                            del file_parser
+
                         except Exception as e:
                             logger.warning("Failed to parse %s: %s", pdf_file, e)
+                            # Add fallback here if needed
 
                 # Process markdown files if any
                 md_files = list(docs_path_obj.glob("*.md"))
@@ -164,13 +177,13 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             logger.error("Error in BCM documentation search: %s", str(e))
             return f"❌ Error in BCM analysis: {str(e)}\n\nPlease check your API keys and network connection."
 
-    yield FunctionInfo.from_fn(
-        _search_bcm_docs,
-        description="Search BCM (Bright Cluster Manager) documentation for accurate information retrieval")
+    yield FunctionInfo.from_fn(_search_bcm_docs,
+                               description=("STEP 2: Generate BCM (Bright Cluster Manager) commands based on "
+                                            "networking requirements from Step 1. Use ONLY after consulting "
+                                            "networking_expert first."))
 
 
 print("✅ BCM Documentation RAG function registered successfully")
-
 
 # ========================
 # Generic Documentation RAG Tool
@@ -204,6 +217,7 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
 
         try:
             # Import LlamaIndex dependencies
+            import yaml
             from llama_index.core import Document
             from llama_index.core import Settings
             from llama_index.core import StorageContext
@@ -212,7 +226,6 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
             from llama_index.embeddings.nvidia import NVIDIAEmbedding
             from llama_index.llms.nvidia import NVIDIA
             from llama_parse import LlamaParse
-            import yaml
 
             # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
@@ -273,18 +286,14 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
                             # Also parse as YAML to extract structured info for metadata
                             try:
                                 yaml_data = yaml.safe_load(content)
-                                metadata = {
-                                    "source": str(yaml_file),
-                                    "file_name": yaml_file.name,
-                                    "file_type": "yaml"
-                                }
+                                metadata = {"source": str(yaml_file), "file_name": yaml_file.name, "file_type": "yaml"}
                                 # Add some structured metadata if available
                                 if isinstance(yaml_data, dict):
                                     if "metadata" in yaml_data:
                                         metadata.update(yaml_data["metadata"])
                                     if "cluster" in yaml_data:
                                         metadata["cluster_name"] = yaml_data.get("cluster", {}).get("name", "unknown")
-                            except:
+                            except Exception:
                                 metadata = {"source": str(yaml_file), "file_name": yaml_file.name, "file_type": "yaml"}
 
                             documents.append(Document(text=content, metadata=metadata))
@@ -301,11 +310,10 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
                             with open(md_file, 'r', encoding='utf-8') as f:
                                 content = f.read()
                             documents.append(
-                                Document(text=content, metadata={
-                                    "source": str(md_file),
-                                    "file_name": md_file.name,
-                                    "file_type": "markdown"
-                                }))
+                                Document(text=content,
+                                         metadata={
+                                             "source": str(md_file), "file_name": md_file.name, "file_type": "markdown"
+                                         }))
                             logger.info("Processed %s", md_file.name)
                         except Exception as e:
                             logger.warning("Failed to load %s: %s", md_file, e)
@@ -319,11 +327,10 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
                             with open(txt_file, 'r', encoding='utf-8') as f:
                                 content = f.read()
                             documents.append(
-                                Document(text=content, metadata={
-                                    "source": str(txt_file),
-                                    "file_name": txt_file.name,
-                                    "file_type": "text"
-                                }))
+                                Document(text=content,
+                                         metadata={
+                                             "source": str(txt_file), "file_name": txt_file.name, "file_type": "text"
+                                         }))
                             logger.info("Processed %s", txt_file.name)
                         except Exception as e:
                             logger.warning("Failed to load %s: %s", txt_file, e)
@@ -353,7 +360,6 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
             if hasattr(response, 'source_nodes') and response.source_nodes:
                 result += "**Sources:**\n"
                 for i, node in enumerate(response.source_nodes[:3], 1):
-                    source = node.metadata.get('source', 'Unknown')
                     file_name = node.metadata.get('file_name', 'Unknown')
                     result += f"{i}. {file_name} (Score: {node.score:.3f})\n"
 
@@ -361,11 +367,12 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
 
         except Exception as e:
             logger.error("Error in documentation search: %s", str(e))
-            return f"❌ Error in {config.expert_type} analysis: {str(e)}\n\nPlease check your API keys and network connection."
+            return (f"❌ Error in {config.expert_type} analysis: {str(e)}\n\n"
+                    f"Please check your API keys and network connection.")
 
-    yield FunctionInfo.from_fn(
-        _search_docs,
-        description=f"Search {config.expert_type} documentation for accurate information retrieval")
+    yield FunctionInfo.from_fn(_search_docs,
+                               description=(f"STEP 1: Analyze {config.expert_type} desired state configuration "
+                                            f"and requirements. Call this FIRST before any BCM operations."))
 
 
 print("✅ BCM Documentation RAG function registered successfully")
