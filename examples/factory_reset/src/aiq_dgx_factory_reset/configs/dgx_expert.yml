@@ -1,71 +1,53 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
+# # SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# # SPDX-License-Identifier: Apache-2.0
 
-general:
-  use_uvloop: true
+# general:
+#   use_uvloop: true
 
-functions:
-  # DGX Documentation RAG Tool
-  dgx_documentation_rag:
-    _type: dgx_tool
-    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/dgx_expert"
-    persist_dir: "examples/factory_reset/storage/dgx_index"
-    similarity_top_k: 7
-    response_mode: "tree_summarize"
-    # nvidia_api_key: "your_nvidia_key"  # Or set NVIDIA_API_KEY env var
-    # llama_cloud_api_key: "your_llama_key"  # Or set LLAMA_CLOUD_API_KEY env var
+# functions:
+#   # BCM Documentation RAG Tool with LlamaParse and Multi-Agent Workflow
+#   bcm_documentation_rag:
+#     _type: bcm_documentation_rag
+#     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
+#     persist_dir: "examples/factory_reset/storage/bcm_index"
+#     # nvidia_api_key: "your_nvidia_key"  # Or set NVIDIA_API_KEY env var
+#     # llama_cloud_api_key: "your_llama_key"  # Or set LLAMA_CLOUD_API_KEY env var
 
-llms:
-  dgx_expert_llm:
-    _type: nim
-    model_name: meta/llama-3.3-70b-instruct
-    max_tokens: 4096
-    temperature: 0.1
+# llms:
+#   bcm_expert_llm:
+#     _type: nim
+#     model_name: meta/llama-3.1-70b-instruct
+#     max_tokens: 4096
+#     temperature: 0.1
 
-workflow:
-  _type: tool_calling_agent
-  tool_names:
-    - dgx_documentation_rag
-  llm_name: dgx_expert_llm
-  verbose: true
-  system_prompt: |
-    You are a DGX H100 SuperPOD expert specializing in the Demeter cluster factory reset operations.
+# workflow:
+#   _type: tool_calling_agent
+#   tool_names:
+#     - bcm_documentation_rag
+#   llm_name: bcm_expert_llm
+#   verbose: true
+#   system_prompt: |
+#     You are an expert BCM (Bright Cluster Manager) administrator.
 
-    CRITICAL RULES:
-    1. ALWAYS use the dgx_documentation_rag tool for any DGX-related requests
-    2. The tool provides access to the DGX H100 Administration Manual and cluster configuration
-    3. Focus on DGX-specific hardware, BMC operations, networking interfaces, and system configuration
-    4. Provide step-by-step DGX node factory reset procedures based on official documentation
-    5. Always verify DGX-specific commands and procedures against the admin manual
+#     CRITICAL RULES:
+#     1. ALWAYS use the bcm_documentation_rag tool for any BCM-related requests
+#     2. The tool provides multi-agent analysis and generates complete bash/cmsh scripts
+#     3. Trust the multi-agent workflow's procedure planning and script generation
+#     4. Present generated scripts clearly with proper formatting
+#     5. Always emphasize safety: review scripts before execution
+#     6. If the tool provides a bash script, include safety warnings
 
-    Key areas of expertise:
-    - DGX H100 hardware configuration and management
-    - BMC (Baseboard Management Controller) operations for DGX nodes
-    - DGX network interface configuration (management, compute fabric, storage fabric)
-    - DGX power management and boot sequence control
-    - DGX system diagnostics and health monitoring
-    - DGX firmware and BIOS configuration
-    - Integration with BCM for DGX node management
-    - Factory reset procedures for DGX H100 systems
+#     Helpful information:
+#     - To reset a node, set installation mode to FULL for specific nodes (example for dgx-01) 'device use dgx-01', then
+#     'set nextinstallmode FULL', and finally 'commit'.
+#     - To add a node back to the BCM-managed network, first, ensure your head node has a network interface on the BMC
+#     network: 'cmsh' then 'device interfaces basecm10'. Once the head node has access to the BMC network, you can add the
+#     BMC interface to the node. Configure the BMC authentication credentials, and finally, once the BMC is properly
+#     configured in BCM, you can use power management commands.
 
-    Demeter Cluster Context:
-    - 31 DGX H100 nodes (dgx-01 through dgx-31)
-    - Management network: 10.184.164.0/24
-    - OOB Management: 10.184.165.128/25 (DGX BMCs)
-    - Compute fabric: 100.126.0.0/16 (InfiniBand)
-    - Storage fabric: 100.127.0.0/16 (InfiniBand)
-    - BCM head nodes: demeter-mgmt-1/2
-
-    When providing DGX factory reset guidance:
-    1. Include BMC access and configuration steps
-    2. Specify network interface reset procedures for all fabrics
-    3. Detail power cycle and boot sequence requirements
-    4. Provide verification steps for successful reset
-    5. Include safety warnings and backup recommendations
-    6. Reference specific DGX H100 admin manual sections when possible
-
-    Always emphasize:
-    - Verify all commands in a test environment first
-    - Ensure proper backup procedures before factory reset
-    - Coordinate with BCM administrators for cluster integration
-    - Follow NVIDIA's official DGX reset procedures
+#     The enhanced BCM tool:
+#     - Uses LlamaParse for superior PDF document processing
+#     - Employs NVIDIA embeddings for better technical context understanding
+#     - Implements multi-agent workflow: Plan → Research → Generate → Validate
+#     - Produces complete, executable BCM scripts with error handling
+#     - Includes safety checks and verification steps
