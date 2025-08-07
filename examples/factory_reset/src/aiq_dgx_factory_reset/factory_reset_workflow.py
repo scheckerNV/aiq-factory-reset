@@ -1,8 +1,9 @@
 """
-Factory Reset Workflow with Multi-Agent Coordination
+Factory Reset Workflow with Reasoning Orchestrator and ReAct Agents
 
-This module implements a LangGraph-based workflow that coordinates between
-networking and BCM experts for complete DGX SuperPOD factory reset operations.
+This module implements a LangGraph-based workflow that uses a reasoning orchestrator
+to coordinate between sequential networking and DGX ReAct agents for complete
+DGX SuperPOD factory reset operations.
 """
 
 import logging
@@ -17,15 +18,15 @@ from aiq.data_models.function import FunctionBaseConfig
 logger = logging.getLogger(__name__)
 
 
-class FactoryResetWorkflowConfig(FunctionBaseConfig, name="factory_reset_workflow"):
+class FactoryResetReasoningWorkflowConfig(FunctionBaseConfig, name="factory_reset_reasoning_workflow"):
     llm: LLMRef
-    networking_tool: FunctionRef
-    bcm_tool: FunctionRef
+    networking_agent: FunctionRef
+    dgx_agent: FunctionRef
 
 
-@register_function(config_type=FactoryResetWorkflowConfig, framework_wrappers=[LLMFrameworkEnum.LANGCHAIN])
-async def factory_reset_workflow(config: FactoryResetWorkflowConfig, builder: Builder):
-    """Factory Reset Orchestrator using LangGraph for multi-agent coordination"""
+@register_function(config_type=FactoryResetReasoningWorkflowConfig, framework_wrappers=[LLMFrameworkEnum.LANGCHAIN])
+async def factory_reset_reasoning_workflow(config: FactoryResetReasoningWorkflowConfig, builder: Builder):
+    """Factory Reset Reasoning Orchestrator coordinating ReAct agents"""
 
     from typing import TypedDict
 
@@ -40,246 +41,294 @@ async def factory_reset_workflow(config: FactoryResetWorkflowConfig, builder: Bu
     from langgraph.graph import StateGraph
 
     # Use builder to get framework-specific tools and LLMs
-    logger.info("Factory reset workflow config = %s", config)
+    logger.info("Factory reset reasoning workflow config = %s", config)
 
     llm = await builder.get_llm(llm_name=config.llm, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
-    networking_tool = builder.get_tool(fn_name=config.networking_tool, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
-    bcm_tool = builder.get_tool(fn_name=config.bcm_tool, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+    networking_agent = builder.get_tool(fn_name=config.networking_agent, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+    dgx_agent = builder.get_tool(fn_name=config.dgx_agent, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
 
     chat_hist = ChatMessageHistory()
 
-    # Router prompt to classify factory reset requests
-    router_prompt = """
-    Given the user input below, classify it as either 'Networking', 'BCM', or 'Both'.
+    # Reasoning orchestrator prompt for high-level planning
+    reasoning_prompt = """
+    You are the Factory Reset Reasoning Orchestrator. Your role is to analyze the request and determine
+    the appropriate execution strategy for DGX SuperPOD factory reset operations.
 
-    'Networking' - questions about network configuration, IPs, VLANs, switches, interface setup, etc.
-    'BCM' - questions specifically about BCM commands, cluster management, node operations without networking context
-    'Both' - questions that require both networking analysis and BCM command generation (most factory reset scenarios)
+    User Request: {input}
 
-    Examples:
-    - "Reset networking for dgx-01" -> Both
-    - "What are the IP requirements for Demeter cluster?" -> Networking
-    - "How do I add a node in BCM?" -> BCM
-    - "Factory reset the entire cluster" -> Both
+    CRITICAL EXECUTION RULES:
+    1. Network reset operations MUST be completed BEFORE any DGX node operations
+    2. Both networking and DGX operations may require BCM commands
+    3. Some requests may only need one type of agent
 
-    User query: {input}
+    Analyze the request and classify as:
+    - "Networking_Only" - Only network-related issues (switches, VLANs, IP addressing, network fabric)
+    - "DGX_Only" - Only DGX hardware issues (assuming network is already functional)
+    - "Sequential_Both" - Requires both networking first, then DGX operations (most factory resets)
+    - "Analysis_Only" - Requesting information/analysis without actual reset operations
+
+    Reasoning Process:
+    1. What specific components need to be reset?
+    2. Does this involve network infrastructure changes?
+    3. Does this involve DGX hardware/node operations?
+    4. What is the correct sequence of operations?
+
+    Based on your analysis, respond with ONLY the classification: Networking_Only, DGX_Only, Sequential_Both, or Analysis_Only
+
     Classification:"""
 
-    routing_chain = ({
+    reasoning_chain = ({
         "input": RunnablePassthrough()
-    } | PromptTemplate.from_template(router_prompt) | llm | StrOutputParser())
+    } | PromptTemplate.from_template(reasoning_prompt) | llm | StrOutputParser())
 
-    supervisor_chain_with_message_history = RunnableWithMessageHistory(
-        routing_chain,
+    reasoning_chain_with_history = RunnableWithMessageHistory(
+        reasoning_chain,
         lambda _: chat_hist,
         history_messages_key="chat_history",
     )
 
     class AgentState(TypedDict):
-        """State management for factory reset workflow"""
+        """State management for reasoning orchestrator workflow"""
         input: str
         chat_history: list[BaseMessage] | None
-        chosen_workflow: str | None
+        execution_strategy: str | None
         networking_result: str | None
-        bcm_result: str | None
+        dgx_result: str | None
         final_output: str | None
 
-    async def supervisor(state: AgentState):
-        """Classify the user request and determine workflow path"""
+    async def reasoning_orchestrator(state: AgentState):
+        """Analyze the request and determine execution strategy"""
         query = state["input"]
-        chosen_workflow = await supervisor_chain_with_message_history.ainvoke(
+        logger.info("%s========== Reasoning Orchestrator - analyzing request", Fore.BLUE)
+
+        execution_strategy = await reasoning_chain_with_history.ainvoke(
             {"input": query},
             {"configurable": {
                 "session_id": "unused"
             }},
         )
-        logger.info("%s========== Supervisor node - classified request as: %s", Fore.BLUE, chosen_workflow.strip())
-        return {'input': query, "chosen_workflow": chosen_workflow.strip(), "chat_history": chat_hist}
 
-    async def router(state: AgentState):
-        """Route to appropriate workflow step based on current state"""
-        status = list(state.keys())
-        logger.info("========== Router node - current status keys: %s%s", Fore.CYAN, status)
+        logger.info("Reasoning decision: %s", execution_strategy.strip())
+        return {'input': query, 'execution_strategy': execution_strategy.strip(), 'chat_history': chat_hist}
 
-        if 'final_output' in state and state['final_output']:
-            route_to = "end"
-        elif 'bcm_result' in state and state['bcm_result']:
-            route_to = "synthesize"
-        elif 'networking_result' in state and state['networking_result']:
-            # If we have networking results, check if we need BCM too
-            chosen_workflow_str = state.get('chosen_workflow', '')
-            chosen_workflow = chosen_workflow_str.lower() if chosen_workflow_str else ''
-            if 'both' in chosen_workflow:
-                route_to = "bcm_expert"
-            else:
-                route_to = "synthesize"
-        elif 'chosen_workflow' in state:
-            # Start with networking for 'Both' and 'Networking', or BCM for 'BCM' only
-            chosen_workflow_str = state.get('chosen_workflow', '')
-            chosen_workflow = chosen_workflow_str.lower() if chosen_workflow_str else ''
-            if 'bcm' in chosen_workflow and 'both' not in chosen_workflow:
-                route_to = "bcm_expert"
-            else:
-                route_to = "networking_expert"
-        else:
-            route_to = "end"
-
-        logger.info(" ############# Router directing to: %s %s", route_to, Fore.RESET)
-        return route_to
-
-    async def networking_expert(state: AgentState):
-        """Call networking expert to analyze requirements"""
+    async def execute_networking(state: AgentState):
+        """Execute networking analysis/operations using ReAct agent"""
         query = state["input"]
-        logger.info("%s========== Networking Expert node - processing query: %s", Fore.GREEN, query[:100] + "...")
+        logger.info("%s========== Executing Networking ReAct Agent", Fore.GREEN)
+
+        # Add context about sequential execution
+        networking_query = f"""
+        Original request: {query}
+
+        CONTEXT: You are handling the NETWORKING phase of a factory reset operation.
+        Focus on network infrastructure, configurations, and connectivity requirements.
+        Provide sequential reasoning and actions for network reset procedures.
+        Remember that DGX operations will follow after network is ready.
+        """
 
         try:
-            networking_result = await networking_tool.ainvoke(query)
-            logger.info("Networking expert completed successfully")
-            logger.info("Result preview: %s", networking_result[:200] + "...")
-
-            return {**state, "networking_result": networking_result}
+            networking_result = await networking_agent.ainvoke(networking_query)
+            logger.info("Networking agent completed successfully")
+            return {**state, 'networking_result': networking_result}
         except Exception as e:
-            logger.error("Error in networking expert: %s", e)
-            error_result = f"❌ Error in networking analysis: {str(e)}"
-            return {**state, "networking_result": error_result}
+            logger.error("Error in networking agent: %s", e)
+            return {**state, 'networking_result': f"❌ Networking agent error: {str(e)}"}
 
-    async def bcm_expert(state: AgentState):
-        """Call BCM expert with networking context if available"""
+    async def execute_dgx(state: AgentState):
+        """Execute DGX analysis/operations using ReAct agent"""
         query = state["input"]
-        networking_context = state.get("networking_result", "")
+        networking_result = state.get('networking_result', '')
+        logger.info("%s========== Executing DGX ReAct Agent", Fore.MAGENTA)
 
-        logger.info("%s========== BCM Expert node - processing query", Fore.YELLOW)
+        # Add context about sequential execution and networking status
+        dgx_query = f"""
+        Original request: {query}
+
+        CONTEXT: You are handling the DGX HARDWARE phase of a factory reset operation.
+        The networking phase has been completed with the following status:
+
+        Networking Status: {networking_result if networking_result else "Not applicable"}
+
+        Focus on DGX hardware, BMC operations, and node-specific procedures.
+        Provide sequential reasoning and actions for DGX reset procedures.
+        Assume network infrastructure is ready for DGX operations.
+        """
 
         try:
-            # Create enhanced query with networking context if available
-            if networking_context and "❌" not in networking_context:
-                enhanced_query = f"""
-Original request: {query}
-
-Networking analysis results:
-{networking_context}
-
-Based on the networking analysis above, generate the appropriate BCM commands for this factory reset scenario.
-"""
-                logger.info("Using enhanced query with networking context")
-            else:
-                enhanced_query = query
-                logger.info("Using original query (no networking context available)")
-
-            bcm_result = await bcm_tool.ainvoke(enhanced_query)
-            logger.info("BCM expert completed successfully")
-            logger.info("Result preview: %s", bcm_result[:200] + "...")
-
-            return {**state, "bcm_result": bcm_result}
+            dgx_result = await dgx_agent.ainvoke(dgx_query)
+            logger.info("DGX agent completed successfully")
+            return {**state, 'dgx_result': dgx_result}
         except Exception as e:
-            logger.error("Error in BCM expert: %s", e)
-            error_result = f"❌ Error in BCM analysis: {str(e)}"
-            return {**state, "bcm_result": error_result}
+            logger.error("Error in DGX agent: %s", e)
+            return {**state, 'dgx_result': f"❌ DGX agent error: {str(e)}"}
 
     async def synthesize_results(state: AgentState):
-        """Combine networking and BCM results into final output"""
-        networking_result = state.get("networking_result", "")
-        bcm_result = state.get("bcm_result", "")
-        chosen_workflow = state.get("chosen_workflow", "Both")
-        chosen_workflow_lower = chosen_workflow.lower() if chosen_workflow else 'both'
+        """Synthesize results from executed agents"""
+        execution_strategy = state.get('execution_strategy', '').lower()
+        networking_result = state.get('networking_result', '')
+        dgx_result = state.get('dgx_result', '')
 
-        logger.info("%s========== Synthesize node - combining results", Fore.MAGENTA)
+        logger.info("%s========== Synthesizing Results", Fore.YELLOW)
 
-        if chosen_workflow_lower == "networking":
-            final_output = networking_result
-        elif chosen_workflow_lower == "bcm":
-            final_output = bcm_result
-        else:  # Both or other
-            if networking_result and bcm_result:
-                final_output = f"""# 🔄 DGX SuperPOD Factory Reset Analysis
+        if 'networking_only' in execution_strategy:
+            final_output = f"""# 🌐 DGX SuperPOD Networking Reset Analysis
+
+{networking_result}
+
+---
+**Execution Strategy**: Networking Only
+**Status**: Network analysis completed
+"""
+
+        elif 'dgx_only' in execution_strategy:
+            final_output = f"""# 🖥️ DGX Hardware Reset Analysis
+
+{dgx_result}
+
+---
+**Execution Strategy**: DGX Only
+**Status**: DGX analysis completed
+"""
+
+        elif 'sequential_both' in execution_strategy:
+            final_output = f"""# 🔄 DGX SuperPOD Complete Factory Reset
+
+## Phase 1: 🌐 Networking Reset (MUST BE COMPLETED FIRST)
+{networking_result}
+
+---
+
+## Phase 2: 🖥️ DGX Hardware Reset (EXECUTE AFTER NETWORKING)
+{dgx_result}
+
+---
+
+## ⚠️ **CRITICAL EXECUTION ORDER**
+1. **FIRST**: Complete all networking reset procedures from Phase 1
+2. **VERIFY**: Ensure network connectivity and fabric are operational
+3. **SECOND**: Execute DGX hardware reset procedures from Phase 2
+4. **VALIDATE**: Verify complete cluster functionality after both phases
+
+**Execution Strategy**: Sequential Both Phases
+**Status**: Complete analysis for network → DGX reset sequence
+"""
+
+        elif 'analysis_only' in execution_strategy:
+            if networking_result and dgx_result:
+                final_output = f"""# 📋 DGX SuperPOD Analysis Report
 
 ## 🌐 Networking Analysis
 {networking_result}
 
 ---
 
-## 🤖 BCM Command Generation
-{bcm_result}
+## 🖥️ DGX Analysis
+{dgx_result}
 
 ---
-
-## ⚠️ **IMPORTANT: Execution Order**
-1. **First:** Review and implement the networking requirements above
-2. **Second:** Execute the BCM commands in the specified order
-3. **Third:** Verify cluster connectivity and node status after reset
-4. **Finally:** Run post-reset validation checks
-
-## 📋 **Next Steps Summary**
-- Verify network configurations before executing BCM commands
-- Test connectivity between management and compute nodes
-- Validate cluster state after factory reset completion
+**Execution Strategy**: Analysis Only
+**Status**: Information gathering completed
 """
             elif networking_result:
-                final_output = networking_result
-            elif bcm_result:
-                final_output = bcm_result
-            else:
-                final_output = "❌ No results generated from either networking or BCM experts."
+                final_output = f"""# 📋 DGX SuperPOD Networking Analysis
 
-        logger.info("Final output synthesized successfully")
-        return {**state, "final_output": final_output}
+{networking_result}
+
+---
+**Execution Strategy**: Analysis Only - Networking Focus
+**Status**: Network information gathering completed
+"""
+            elif dgx_result:
+                final_output = f"""# 📋 DGX SuperPOD DGX Analysis
+
+{dgx_result}
+
+---
+**Execution Strategy**: Analysis Only - DGX Focus
+**Status**: DGX information gathering completed
+"""
+            else:
+                final_output = "❌ No analysis results available"
+
+        else:
+            final_output = f"""❌ Unknown execution strategy: {execution_strategy}
+
+Available strategies: Networking_Only, DGX_Only, Sequential_Both, Analysis_Only"""
+
+        return {**state, 'final_output': final_output}
+
+    def route_execution(state: AgentState):
+        """Route based on execution strategy"""
+        execution_strategy = state.get('execution_strategy', '').lower()
+
+        if 'networking_only' in execution_strategy:
+            return "networking"
+        elif 'dgx_only' in execution_strategy:
+            return "dgx"
+        elif 'sequential_both' in execution_strategy:
+            return "networking"  # Start with networking for sequential
+        elif 'analysis_only' in execution_strategy:
+            return "networking"  # Default to networking for analysis
+        else:
+            return "synthesize"
+
+    def route_after_networking(state: AgentState):
+        """Route after networking phase"""
+        execution_strategy = state.get('execution_strategy', '').lower()
+
+        if 'sequential_both' in execution_strategy:
+            return "dgx"  # Continue to DGX phase
+        else:
+            return "synthesize"  # Go directly to synthesis
+
+    def route_after_dgx(state: AgentState):
+        """Always go to synthesis after DGX"""
+        return "synthesize"
 
     # Build the workflow graph
     workflow = StateGraph(AgentState)
-    workflow.add_node("supervisor", supervisor)
-    workflow.add_node("networking_expert", networking_expert)
-    workflow.add_node("bcm_expert", bcm_expert)
+
+    # Add nodes
+    workflow.add_node("reasoning", reasoning_orchestrator)
+    workflow.add_node("networking", execute_networking)
+    workflow.add_node("dgx", execute_dgx)
     workflow.add_node("synthesize", synthesize_results)
 
-    workflow.set_entry_point("supervisor")
+    # Set entry point
+    workflow.set_entry_point("reasoning")
 
-    # Define the conditional edges based on router logic
-    workflow.add_conditional_edges(
-        "supervisor",
-        router,
-        {
-            "networking_expert": "networking_expert", "bcm_expert": "bcm_expert", "end": END
-        },
-    )
+    # Define routing logic
+    workflow.add_conditional_edges("reasoning",
+                                   route_execution, {
+                                       "networking": "networking", "dgx": "dgx", "synthesize": "synthesize"
+                                   })
 
-    workflow.add_conditional_edges(
-        "networking_expert",
-        router,
-        {
-            "bcm_expert": "bcm_expert", "synthesize": "synthesize", "end": END
-        },
-    )
+    workflow.add_conditional_edges("networking", route_after_networking, {"dgx": "dgx", "synthesize": "synthesize"})
 
-    workflow.add_conditional_edges(
-        "bcm_expert",
-        router,
-        {
-            "synthesize": "synthesize", "end": END
-        },
-    )
+    workflow.add_conditional_edges("dgx", route_after_dgx, {"synthesize": "synthesize"})
 
     workflow.add_edge("synthesize", END)
 
     app = workflow.compile()
 
     async def _response_fn(input_message: str) -> str:
-        """Execute the factory reset workflow"""
+        """Execute the factory reset reasoning workflow"""
         try:
-            logger.info("🚀 Starting factory reset workflow execution")
+            logger.info("🚀 Starting factory reset reasoning workflow")
             result = await app.ainvoke({"input": input_message, "chat_history": chat_hist})
             output = result.get("final_output", "No output generated")
-            logger.info("✅ Factory reset workflow completed successfully")
+            logger.info("✅ Factory reset reasoning workflow completed")
             return output
         except Exception as e:
-            logger.error("❌ Error in factory reset workflow: %s", e)
-            return f"❌ Error in factory reset workflow: {str(e)}\n\nPlease check your configuration and try again."
+            logger.error("❌ Error in factory reset reasoning workflow: %s", e)
+            return f"❌ Error in factory reset reasoning workflow: {str(e)}\n\nPlease check your configuration and try again."
 
     try:
         yield _response_fn
     except GeneratorExit:
-        logger.exception("Factory reset workflow exited early!", exc_info=True)
+        logger.exception("Factory reset reasoning workflow exited early!", exc_info=True)
     finally:
-        logger.debug("Cleaning up factory reset workflow.")
+        logger.debug("Cleaning up factory reset reasoning workflow.")
 
 
-print("✅ Factory Reset workflow registered successfully")
+print("✅ Factory Reset Reasoning workflow registered successfully")
