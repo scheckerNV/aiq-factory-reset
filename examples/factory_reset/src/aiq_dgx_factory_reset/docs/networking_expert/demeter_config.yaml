@@ -1,5 +1,5 @@
-# Demeter DGX H100 BasePOD Cluster - Desired State Configuration
-# Week 1 MVP: Enterprise cluster infrastructure management
+# This is the Demeter DGX H100 BasePOD Cluster's Desired State Configuration
+# This is a YAML file that defines the desired state of the cluster
 
 metadata:
   version: "1.0.0"

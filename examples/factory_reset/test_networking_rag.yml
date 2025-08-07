@@ -1,0 +1,32 @@
+general:
+  use_uvloop: true
+
+functions:
+  networking_expert:
+    _type: networking_expert_rag
+    docs_path: examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert
+    persist_dir: examples/factory_reset/storage/networking_index
+    similarity_top_k: 5
+    response_mode: tree_summarize
+    expert_type: Networking
+
+llms:
+  nvidia_llm:
+    _type: nim
+    model_name: meta/llama-3.1-8b-instruct
+    temperature: 0.1
+    max_tokens: 1000
+
+workflow:
+  _type: react_agent
+  tool_names:
+    - networking_expert
+  llm_name: nvidia_llm
+  verbose: true
+  system_prompt: |
+    You are a networking expert. Use the networking_expert tool to search documentation and answer questions about network configuration.
+
+    ALWAYS call the networking_expert tool for any networking-related questions to get accurate information from the documentation.
+
+    Available tools: {tools}
+    Tool names: {tool_names}
