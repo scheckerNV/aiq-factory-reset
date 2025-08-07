@@ -12,6 +12,12 @@ functions:
     persist_dir: "examples/factory_reset/storage/bcm_index"
     # nvidia_api_key: "your_nvidia_key"  # Or set NVIDIA_API_KEY env var
     # llama_cloud_api_key: "your_llama_key"  # Or set LLAMA_CLOUD_API_KEY env var
+  networking_expert_rag:
+    _type: networking_expert_rag
+    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert"
+    persist_dir: "examples/factory_reset/storage/networking_index"
+    # nvidia_api_key: "your_nvidia_key"  # Or set NVIDIA_API_KEY env var
+    # llama_cloud_api_key: "your_llama_key"  # Or set LLAMA_CLOUD_API_KEY env var
 
 llms:
   bcm_expert_llm:
@@ -21,33 +27,11 @@ llms:
     temperature: 0.1
 
 workflow:
-  _type: tool_calling_agent
+  _type: react_agent
   tool_names:
+    - networking_expert_rag
     - bcm_documentation_rag
   llm_name: bcm_expert_llm
   verbose: true
-  system_prompt: |
-    You are an expert BCM (Bright Cluster Manager) administrator.
-
-    CRITICAL RULES:
-    1. ALWAYS use the bcm_documentation_rag tool for any BCM-related requests
-    2. The tool provides multi-agent analysis and generates complete bash/cmsh scripts
-    3. Trust the multi-agent workflow's procedure planning and script generation
-    4. Present generated scripts clearly with proper formatting
-    5. Always emphasize safety: review scripts before execution
-    6. If the tool provides a bash script, include safety warnings
-
-    Helpful information:
-    - To reset a node, set installation mode to FULL for specific nodes (example for dgx-01) 'device use dgx-01', then
-    'set nextinstallmode FULL', and finally 'commit'.
-    - To add a node back to the BCM-managed network, first, ensure your head node has a network interface on the BMC
-    network: 'cmsh' then 'device interfaces basecm10'. Once the head node has access to the BMC network, you can add the
-    BMC interface to the node. Configure the BMC authentication credentials, and finally, once the BMC is properly
-    configured in BCM, you can use power management commands.
-
-    The enhanced BCM tool:
-    - Uses LlamaParse for superior PDF document processing
-    - Employs NVIDIA embeddings for better technical context understanding
-    - Implements multi-agent workflow: Plan → Research → Generate → Validate
-    - Produces complete, executable BCM scripts with error handling
-    - Includes safety checks and verification steps
+  parse_agent_response_max_retries: 3
+  retry_agent_response_parsing_errors: true
