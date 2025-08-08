@@ -600,3 +600,173 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
 
 
 print("✅ Networking Expert RAG tool registered successfully")
+
+# ========================
+# Networking Expert Assessment Tool
+# ========================
+
+
+class NetworkAssessmentToolConfig(FunctionBaseConfig, name="network_assessment_tool"):
+    cluster_host: str = Field(description="Virtual cluster hostname/IP")
+    cluster_user: str = Field(description="SSH username for cluster access")
+    timeout: int = Field(default=300, description="Assessment timeout in seconds")
+
+
+@register_function(config_type=NetworkAssessmentToolConfig)
+async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder: Builder):
+    """Comprehensive network assessment tool for BCM clusters"""
+
+    async def _run_network_assessment(input_message: str) -> str:
+        """Execute comprehensive network assessment"""
+        import asyncio
+        import tempfile
+
+        # Create the assessment script
+        # Read the shell script content from the external file
+        script_path_on_disk = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                                           "scripts",
+                                           "network_assessment.sh")
+        with open(script_path_on_disk, "r", encoding="utf-8") as f:
+            script_content = f.read()
+
+        try:
+            # Upload and execute the script
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
+                f.write(script_content)
+                script_path = f.name
+
+            # Make executable
+            os.chmod(script_path, 0o755)
+
+            # Copy script to cluster
+            scp_cmd = ["scp", script_path, f"{config.cluster_user}@{config.cluster_host}:/tmp/network_assessment.sh"]
+
+            scp_process = await asyncio.create_subprocess_exec(*scp_cmd,
+                                                               stdout=asyncio.subprocess.PIPE,
+                                                               stderr=asyncio.subprocess.PIPE)
+            await scp_process.communicate()
+
+            if scp_process.returncode != 0:
+                return "❌ Failed to upload assessment script to cluster"
+
+            # Execute script on cluster
+            ssh_cmd = [
+                "ssh",
+                f"{config.cluster_user}@{config.cluster_host}",
+                "chmod +x /tmp/network_assessment.sh && /tmp/network_assessment.sh"
+            ]
+
+            ssh_process = await asyncio.create_subprocess_exec(*ssh_cmd,
+                                                               stdout=asyncio.subprocess.PIPE,
+                                                               stderr=asyncio.subprocess.PIPE)
+
+            stdout, stderr = await asyncio.wait_for(ssh_process.communicate(), timeout=config.timeout)
+
+            # Clean up local script
+            os.unlink(script_path)
+
+            if ssh_process.returncode == 0:
+                return f"""✅ Network assessment completed successfully!
+
+📋 Assessment Output:
+{stdout.decode('utf-8')}
+
+📁 Results saved on cluster in timestamped directory.
+Use the network_results_reader tool to analyze the results.
+
+🔍 Next steps:
+1. Use network_results_reader to parse the assessment data
+2. Compare current state with desired configuration
+3. Generate remediation plan based on differences
+"""
+            else:
+                return f"❌ Assessment script failed:\n{stderr.decode('utf-8')}"
+
+        except asyncio.TimeoutError:
+            return f"❌ Assessment timed out after {config.timeout} seconds"
+        except Exception as e:
+            return f"❌ Assessment error: {str(e)}"
+
+    yield FunctionInfo.from_fn(_run_network_assessment, description="Run comprehensive BCM cluster network assessment")
+
+
+print("✅ Networking Expert Network Assessment tool registered successfully")
+
+# ========================
+# Networking Expert Network Results Reader Tool
+# ========================
+
+
+class NetworkResultsReaderConfig(FunctionBaseConfig, name="network_results_reader"):
+    cluster_host: str = Field(description="Virtual cluster hostname/IP")
+    cluster_user: str = Field(description="SSH username for cluster access")
+    results_directory: str = Field(description="Assessment results directory path")
+
+
+@register_function(config_type=NetworkResultsReaderConfig)
+async def network_results_reader(config: NetworkResultsReaderConfig, _builder: Builder):
+    """Read and analyze network assessment results"""
+
+    async def _read_assessment_results(query: str) -> str:
+        """Read specific assessment results based on query"""
+        import asyncio
+
+        try:
+            # Handle default query
+            if not query or query.strip() == "":
+                query = "summary"
+
+            # Determine which files to read based on query
+            if "summary" in query.lower():
+                files_to_read = ["00_SUMMARY.txt"]
+            elif "device" in query.lower():
+                files_to_read = ["01_device_status.txt", "02_device_list.txt"]
+            elif "connectivity" in query.lower():
+                files_to_read = ["05_connectivity.txt", "06_connectivity_stats.txt"]
+            elif "switch" in query.lower():
+                files_to_read = ["10_switch_*", "11_switch_*", "12_switch_*"]
+            elif "network" in query.lower():
+                files_to_read = ["03_networks.txt", "04_interfaces.txt"]
+            else:
+                files_to_read = ["00_SUMMARY.txt"]
+
+            results = []
+
+            for file_pattern in files_to_read:
+                ssh_cmd = [
+                    "ssh",
+                    f"{config.cluster_user}@{config.cluster_host}",
+                    f"find {config.results_directory} -name '{file_pattern}' -exec cat {{}} \\;"
+                ]
+
+                process = await asyncio.create_subprocess_exec(*ssh_cmd,
+                                                               stdout=asyncio.subprocess.PIPE,
+                                                               stderr=asyncio.subprocess.PIPE)
+
+                stdout, stderr = await process.communicate()
+
+                if process.returncode == 0:
+                    content = stdout.decode('utf-8')
+                    if content.strip():
+                        results.append(f"📄 {file_pattern}:\n{content}\n{'='*50}\n")
+
+            if results:
+                return f"""📊 Network Assessment Results:
+
+{chr(10).join(results)}
+
+💡 Analysis complete! Use this data to:
+1. Compare with desired state configuration
+2. Identify configuration gaps
+3. Plan remediation steps
+"""
+            else:
+                return "❌ No assessment results found. Run network_assessment_tool first."
+
+        except Exception as e:
+            return f"❌ Error reading assessment results: {str(e)}"
+
+    yield FunctionInfo.from_fn(_read_assessment_results, description="Read and analyze network assessment results")
+
+
+print("✅ Networking Expert Network Assessment tool registered successfully")
