@@ -7,20 +7,34 @@ general:
 functions:
   # BCM Documentation RAG Tool with LlamaParse and Multi-Agent Workflow
   bcm_documentation_rag:
-    _type: bcm_documentation_rag
+    _type: aiq_dgx_factory_reset/bcm_documentation_rag
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
     persist_dir: "examples/factory_reset/storage/bcm_index"
 
   networking_expert_rag:
-    _type: networking_expert_rag
+    _type: aiq_dgx_factory_reset/networking_expert_rag
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert"
     persist_dir: "examples/factory_reset/storage/networking_index"
+
+  network_assessment_tool:
+    _type: aiq_dgx_factory_reset/network_assessment_tool
+    cluster_host: "your-cluster-ip"
+    cluster_user: "your-username"
+    timeout: 300
+
+  network_results_reader:
+    _type: aiq_dgx_factory_reset/network_results_reader
+    cluster_host: "your-cluster-ip"
+    cluster_user: "your-username"
+    results_directory: "/tmp/cluster_assessment_*"
 
   networking_react_agent:
     _type: react_agent
     tool_names:
       - networking_expert_rag
       - bcm_documentation_rag
+      - network_assessment_tool
+      - network_results_reader
     llm_name: execution_llm
     verbose: true
     parse_agent_response_max_retries: 3
@@ -30,7 +44,7 @@ llms:
   # Reasoning LLM
   reasoning_llm:
     _type: nim
-    model_name: deepseek-ai/deepseek-r1
+    model_name: meta/llama-3.1-70b-instruct
     max_tokens: 4096
     temperature: 0.1
 

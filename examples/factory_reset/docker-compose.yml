@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+services:
+  # Main factory reset application
+  factory-reset:
+    build:
+      context: ../..  # Build from repo root
+      dockerfile: examples/factory_reset/Dockerfile
+    container_name: aiq-factory-reset
+    ports:
+      - "${FACTORY_RESET_PORT:-8000}:8000"
+    environment:
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - AIQ_CONFIG_FILE=${AIQ_CONFIG_FILE:-/workspace/examples/factory_reset/src/aiq_dgx_factory_reset/configs/factory_reset_orchestrator.yml}
+      - AIQ_LOG_LEVEL=${AIQ_LOG_LEVEL:-INFO}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:4317
+    volumes:
+      - ./storage:/workspace/examples/factory_reset/storage
+      - ./src:/workspace/examples/factory_reset/src  # Development mode
+    depends_on:
+      - redis
+      - phoenix
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Redis for memory/caching
+  redis:
+    image: redis:8.0
+    container_name: factory-reset-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Redis Insight for Redis management
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: factory-reset-redisinsight
+    ports:
+      - "${REDISINSIGHT_PORT:-5540}:5540"
+    volumes:
+      - redisinsight-data:/data
+    restart: unless-stopped
+    depends_on:
+      - redis
+
+  # Phoenix for observability
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: factory-reset-phoenix
+    ports:
+      - "${PHOENIX_UI_PORT:-6006}:6006"      # UI and OTLP HTTP collector
+      - "${PHOENIX_GRPC_PORT:-4317}:4317"    # OTLP gRPC collector
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6006"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  redis-data:
+    driver: local
+  redisinsight-data:
+    driver: local
+
+networks:
+  default:
+    name: factory-reset-network
