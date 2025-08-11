@@ -403,7 +403,6 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
                                             f"and requirements. Call this FIRST before any BCM operations."))
 
 
-print("✅ BCM Documentation RAG function registered successfully")
 print("✅ Generic Documentation RAG function registered successfully")
 
 # ========================
@@ -769,4 +768,5 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
     yield FunctionInfo.from_fn(_read_assessment_results, description="Read and analyze network assessment results")
 
 
-print("✅ Networking Expert Network Assessment tool registered successfully")
+print("✅ Networking Expert Network Reader tool registered successfully")
+
