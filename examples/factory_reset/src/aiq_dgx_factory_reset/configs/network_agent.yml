@@ -18,14 +18,14 @@ functions:
 
   network_assessment_tool:
     _type: aiq_dgx_factory_reset/network_assessment_tool
-    cluster_host: "your-cluster-ip"
-    cluster_user: "your-username"
+    cluster_host: "localhost"
+    cluster_user: "root"
     timeout: 300
 
   network_results_reader:
     _type: aiq_dgx_factory_reset/network_results_reader
-    cluster_host: "your-cluster-ip"
-    cluster_user: "your-username"
+    cluster_host: "localhost"
+    cluster_user: "root"
     results_directory: "/tmp/cluster_assessment_*"
 
   networking_react_agent:
