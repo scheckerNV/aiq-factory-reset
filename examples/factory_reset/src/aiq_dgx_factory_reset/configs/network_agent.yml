@@ -8,11 +8,14 @@ functions:
   # BCM Documentation RAG Tool with LlamaParse and Multi-Agent Workflow
   bcm_documentation_rag:
     _type: aiq_dgx_factory_reset/bcm_documentation_rag
+    max_tokens: 8192
+    response_mode: "tree_summarize"
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
     persist_dir: "examples/factory_reset/storage/bcm_index"
 
   networking_expert_rag:
     _type: aiq_dgx_factory_reset/networking_expert_rag
+    max_tokens: 8192
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert"
     persist_dir: "examples/factory_reset/storage/networking_index"
 
@@ -45,13 +48,13 @@ llms:
   reasoning_llm:
     _type: nim
     model_name: meta/llama-3.1-70b-instruct
-    max_tokens: 4096
+    max_tokens: 8192
     temperature: 0.1
 
   execution_llm:
     _type: nim
     model_name: meta/llama-3.1-70b-instruct
-    max_tokens: 4096
+    max_tokens: 8192
     temperature: 0.1
 
 workflow:

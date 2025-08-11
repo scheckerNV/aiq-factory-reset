@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Simple POC configuration for BCM command execution with human approval
+general:
+  use_uvloop: true
+
+functions:
+  # Human-in-the-Loop Approval Function
+  hitl_code_approval:
+    _type: aiq_dgx_factory_reset/hitl_code_approval
+    prompt: "🔧 BCM COMMAND EXECUTION - The following commands will be executed on your DGX cluster"
+
+  # BCM Command Execution Tool with Human Approval
+  bcm_executor:
+    _type: aiq_dgx_factory_reset/code_execution_with_approval
+    cluster_host: "localhost"  # Change this to your cluster hostname/IP
+    cluster_user: "root"       # Change this to your cluster username
+    timeout: 300
+    dry_run: true             # Set to false for live execution (be careful!)
+    coder_llm_name: coder_llm # Uses Qwen2.5 for validation
+    hitl_approval_fn: hitl_code_approval
+
+llms:
+  # Qwen2.5 Coder for command validation (if NIM is working)
+  # Falls back gracefully if not available
+  coder_llm:
+    _type: nim
+    model_name: nvidia/qwen2.5-coder-32b-instruct  # Qwen2.5 Coder from NIM
+    max_tokens: 4096
+    temperature: 0.1
+
+workflow:
+  _type: bcm_executor
