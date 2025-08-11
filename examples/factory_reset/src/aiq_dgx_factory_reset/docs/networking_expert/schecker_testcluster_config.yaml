@@ -1,0 +1,599 @@
+# This is the Schecker Test Cluster's Desired State Configuration
+# This is a YAML file that defines the desired state of the cluster
+# Generated from cluster assessment data on Mon Aug 11 06:27:34 PM CEST 2025
+
+metadata:
+  version: "1.0.0"
+  description: "Schecker Test Cluster Desired State Configuration"
+  created: "2025-08-11"
+  environment: "test"
+  cluster_name: "schecker-testcluster"
+  total_nodes: 10
+  assessment_date: "Mon Aug 11 06:27:34 PM CEST 2025"
+  assessment_source: "/tmp/cluster_assessment_20250811_182715"
+
+# ==============================================================================
+# CLUSTER CONFIGURATION
+# ==============================================================================
+cluster:
+  name: "schecker-testcluster"
+  type: "test_cluster"
+  location: "test-environment"
+
+  # BCM Configuration - based on current state
+  bcm:
+    enabled: true
+    shared_ip: "10.141.255.254"
+    head_nodes:
+      primary:
+        hostname: "schecker-testcluster"
+        ip: "10.141.255.254"
+        mac: "FA:16:3E:E1:6A:6E"
+        external_ip: "192.168.200.227"
+    domain: "cluster.local"
+    default_image: "default-image"
+    status: "active"
+    uptime: "3d 10h"
+    version: "3.1"
+
+# ==============================================================================
+# NETWORK FABRIC DEFINITIONS
+# ==============================================================================
+network_fabrics:
+  # Internal Management Network
+  internal:
+    name: "internalnet"
+    aliases: ["eth.cluster"]
+    subnet: "10.141.0.0/16"
+    gateway: "10.141.255.254"
+    vlan: null
+    usable_range: "10.141.0.1-10.141.255.253"
+    description: "Internal cluster management network"
+    interface: "ens3"
+
+  # External Network
+  external:
+    name: "externalnet"
+    aliases: ["openstacklocal"]
+    subnet: "192.168.200.0/24"
+    gateway: "192.168.200.254"
+    vlan: null
+    usable_range: "192.168.200.1-192.168.200.253"
+    description: "External network connection"
+    dns_servers: ["192.168.200.254"]
+
+  # Global Network
+  global:
+    name: "globalnet"
+    aliases: ["cm.cluster"]
+    subnet: "0.0.0.0/0"
+    gateway: null
+    description: "Global network configuration"
+
+# ==============================================================================
+# COMPUTE NODE DEFINITIONS (10 nodes)
+# ==============================================================================
+nodes:
+  # Standard references for all nodes
+  node_power: &node_power
+    desired_state: "on"
+    power_policy: "restore_previous"
+    auto_power_on: true
+
+  node_software: &node_software
+    os_image: "default"
+    bcm_enrolled: true
+    monitoring_enabled: true
+
+  node_health: &node_health
+    temperature_thresholds:
+      cpu_critical: 85
+      cpu_warning: 75
+    memory_thresholds:
+      memory_usage_critical: 95
+      memory_usage_warning: 85
+    connectivity_status: "ok"
+
+  # Physical Nodes (node001-node010)
+  node001:
+    hostname: "node001"
+    model: "PhysicalNode"
+    device_type: "PhysicalNode"
+    mac_address: "FA:16:3E:49:DF:55"
+    status: "UP"
+    health_check: "failed"
+    networks:
+      internal:
+        ip: "10.141.0.1"
+        gateway: "10.141.255.254"
+        interface: "ens3"
+        default_route: true
+    power: *node_power
+    software: *node_software
+    health: *node_health
+    services:
+      listening_ports: [22, 25, 111, 4000, 45519]
+      active_connections:
+        - protocol: "TCP"
+          local_port: 880
+          remote: "10.141.255.254:2049"
+          state: "Established"
+        - protocol: "TCP"
+          local_port: 34398
+          remote: "10.141.255.254:636"
+          state: "Established"
+
+  node002:
+    hostname: "node002"
+    model: "PhysicalNode"
+    device_type: "PhysicalNode"
+    mac_address: "FA:16:3E:2E:D4:C6"
+    status: "UP"
+    health_check: "failed"
+    networks:
+      internal:
+        ip: "10.141.0.2"
+        gateway: "10.141.255.254"
+        interface: "ens3"
+        default_route: true
+    power: *node_power
+    software: *node_software
+    health: *node_health
+    services:
+      listening_ports: [22, 25, 111, 4000, 35233]
+      active_connections:
+        - protocol: "TCP"
+          local_port: 1012
+          remote: "10.141.255.254:2049"
+          state: "Established"
+        - protocol: "TCP"
+          local_port: 34364
+          remote: "10.141.255.254:636"
+          state: "Established"
+
+  node003:
+    hostname: "node003"
+    model: "PhysicalNode"
+    device_type: "PhysicalNode"
+    mac_address: "FA:16:3E:67:3A:4C"
+    status: "UP"
+    health_check: "failed"
+    networks:
+      internal:
+        ip: "10.141.0.3"
+        gateway: "10.141.255.254"
+        interface: "ens3"
+        default_route: true
+    power: *node_power
+    software: *node_software
+    health: *node_health
+    services:
+      listening_ports: [22, 25, 111, 4000, 36365]
+      active_connections:
+        - protocol: "TCP"
+          local_port: 967
+          remote: "10.141.255.254:2049"
+          state: "Established"
+        - protocol: "TCP"
+          local_port: 39290
+          remote: "10.141.255.254:636"
+          state: "Established"
+
+  node004:
+    hostname: "node004"
+    model: "PhysicalNode"
+    device_type: "PhysicalNode"
+    mac_address: "FA:16:3E:4B:E3:E0"
+    status: "UP"
+    health_check: "passed"
+    networks:
+      internal:
+        ip: "10.141.0.4"
+        gateway: "10.141.255.254"
+        interface: "ens3"
+        default_route: true
+    power: *node_power
+    software: *node_software
+    health: *node_health
+    services:
+      listening_ports: [22, 25, 111, 4000, 46271]
+      active_connections:
+        - protocol: "TCP"
+          local_port: 762
+          remote: "10.141.255.254:2049"
+          state: "Established"
+        - protocol: "TCP"
+          local_port: 36372
+          remote: "10.141.255.254:636"
+          state: "Established"
+
+  node005:
+    hostname: "node005"
+    model: "PhysicalNode"
+    device_type: "PhysicalNode"
+    mac_address: "FA:16:3E:CF:D0:4B"
+    status: "UP"
+    health_check: "failed"
+    networks:
+      internal:
+        ip: "10.141.0.5"
+        gateway: "10.141.255.254"
+        interface: "ens3"
+        default_route: true
+    power: *node_power
+    software: *node_software
+    health: *node_health
+    services:
+      listening_ports: [22, 25, 111, 4000, 38075]
+      active_connections:
+        - protocol: "TCP"
+          local_port: 949
+          remote: "10.141.255.254:2049"
+          state: "Established"
+        - protocol: "TCP"
+          local_port: 35446
+          remote: "10.141.255.254:636"
+          state: "Established"
+
+  node006:
+    hostname: "node006"
+    model: "PhysicalNode"
+    device_type: "PhysicalNode"
+    mac_address: "FA:16:3E:AE:18:E6"
+    status: "UP"
+    health_check: "passed"
+    networks:
+      internal:
+        ip: "10.141.0.6"
+        gateway: "10.141.255.254"
+        interface: "ens3"
+        default_route: true
+    power: *node_power
+    software: *node_software
+    health: *node_health
+    services:
+      listening_ports: [22, 25, 111, 4000, 36871]
+      active_connections:
+        - protocol: "TCP"
+          local_port: 929
+          remote: "10.141.255.254:2049"
+          state: "Established"
+        - protocol: "TCP"
+          local_port: 41326
+          remote: "10.141.255.254:636"
+          state: "Established"
+
+  node007:
+    hostname: "node007"
+    model: "PhysicalNode"
+    device_type: "PhysicalNode"
+    mac_address: "FA:16:3E:86:44:C7"
+    status: "UP"
+    health_check: "failed"
+    networks:
+      internal:
+        ip: "10.141.0.7"
+        gateway: "10.141.255.254"
+        interface: "ens3"
+        default_route: true
+    power: *node_power
+    software: *node_software
+    health: *node_health
+    services:
+      listening_ports: [22, 25, 111, 4000, 41955]
+      active_connections:
+        - protocol: "TCP"
+          local_port: 981
+          remote: "10.141.255.254:2049"
+          state: "Established"
+        - protocol: "TCP"
+          local_port: 52156
+          remote: "10.141.255.254:636"
+          state: "Established"
+
+  node008:
+    hostname: "node008"
+    model: "PhysicalNode"
+    device_type: "PhysicalNode"
+    mac_address: "FA:16:3E:37:CA:A2"
+    status: "UP"
+    health_check: "failed"
+    networks:
+      internal:
+        ip: "10.141.0.8"
+        gateway: "10.141.255.254"
+        interface: "ens3"
+        default_route: true
+    power: *node_power
+    software: *node_software
+    health: *node_health
+    services:
+      listening_ports: [22, 25, 111, 4000, 40367]
+      active_connections:
+        - protocol: "TCP"
+          local_port: 888
+          remote: "10.141.255.254:2049"
+          state: "Established"
+        - protocol: "TCP"
+          local_port: 52046
+          remote: "10.141.255.254:636"
+          state: "Established"
+
+  node009:
+    hostname: "node009"
+    model: "PhysicalNode"
+    device_type: "PhysicalNode"
+    mac_address: "FA:16:3E:43:35:17"
+    status: "UP"
+    health_check: "passed"
+    networks:
+      internal:
+        ip: "10.141.0.9"
+        gateway: "10.141.255.254"
+        interface: "ens3"
+        default_route: true
+    power: *node_power
+    software: *node_software
+    health: *node_health
+    services:
+      listening_ports: [22, 25, 111, 4000, 44617]
+      active_connections:
+        - protocol: "TCP"
+          local_port: 900
+          remote: "10.141.255.254:2049"
+          state: "Established"
+        - protocol: "TCP"
+          local_port: 47862
+          remote: "10.141.255.254:636"
+          state: "Established"
+
+  node010:
+    hostname: "node010"
+    model: "PhysicalNode"
+    device_type: "PhysicalNode"
+    mac_address: "FA:16:3E:F5:1F:92"
+    status: "UP"
+    health_check: "passed"
+    networks:
+      internal:
+        ip: "10.141.0.10"
+        gateway: "10.141.255.254"
+        interface: "ens3"
+        default_route: true
+    power: *node_power
+    software: *node_software
+    health: *node_health
+    services:
+      listening_ports: [22, 25, 111, 4000, 42109]
+      active_connections:
+        - protocol: "TCP"
+          local_port: 954
+          remote: "10.141.255.254:2049"
+          state: "Established"
+        - protocol: "TCP"
+          local_port: 50322
+          remote: "10.141.255.254:636"
+          state: "Established"
+
+# ==============================================================================
+# INFRASTRUCTURE COMPONENTS
+# ==============================================================================
+infrastructure:
+  # Head Node / Management Node
+  head_node:
+    schecker-testcluster:
+      hostname: "schecker-testcluster"
+      device_type: "HeadNode"
+      mac_address: "FA:16:3E:E1:6A:6E"
+      status: "UP"
+      health_check: "failed"
+      role: "cluster_manager"
+      networks:
+        internal:
+          ip: "10.141.255.254"
+          interface: "eth0"
+        external:
+          ip: "192.168.200.227"
+          gateway: "192.168.200.254"
+          interface: "eth1"
+          routes:
+            - destination: "169.254.169.254/32"
+              gateway: "192.168.200.128"
+              metric: "UGH (0007)"
+        docker_networks:
+          - name: "docker0"
+            subnet: "172.17.0.0/16"
+          - name: "br-dedf4e850524"
+            subnet: "172.18.0.0/16"
+      services:
+        management_services:
+          - port: 636
+            protocol: "TCP"
+            description: "LDAP service"
+          - port: 2049
+            protocol: "TCP"
+            description: "NFS service"
+          - port: 4000
+            protocol: "TCP"
+            description: "Management service"
+          - port: 4001
+            protocol: "TCP"
+            description: "Management service"
+          - port: 4002
+            protocol: "TCP"
+            description: "Management service"
+          - port: 5000
+            protocol: "TCP"
+            description: "Management service"
+          - port: 8000
+            protocol: "TCP"
+            description: "Web service"
+        database_services:
+          - port: 5432
+            protocol: "TCP"
+            description: "PostgreSQL database"
+            bind_address: "127.0.0.1"
+        dns_services:
+          - port: 53
+            protocol: "TCP/UDP"
+            bind_addresses: ["10.141.255.254", "127.0.0.1", "172.17.0.1", "172.18.0.1", "192.168.200.227"]
+        external_access:
+          - connection: "192.168.200.227:22"
+            remote: "10.3.202.203:52690"
+            state: "Established"
+            description: "SSH access from external network"
+
+# ==============================================================================
+# CONNECTIVITY MATRIX
+# ==============================================================================
+connectivity:
+  inter_node_connectivity:
+    test_results:
+      total_connections: 1210
+      successful_connections: 1210
+      uniformity: "100.0%"
+      average_latency: "571.13us"
+      minimum_latency: "190.01us"
+      maximum_latency: "962.74us"
+
+    # Sample connectivity data (all nodes show "Ok" status)
+    connectivity_samples:
+      - source: "node001"
+        destination: "node002"
+        status: "Ok"
+        latency: "399.8us"
+      - source: "node001"
+        destination: "schecker-testcluster"
+        status: "Ok"
+        latency: "862.1us"
+      - source: "node003"
+        destination: "node008"
+        status: "Ok"
+        latency: "832.72us"
+        quality: "60.0%"
+
+# ==============================================================================
+# CLUSTER-WIDE POLICIES
+# ==============================================================================
+policies:
+  # Health Monitoring
+  monitoring:
+    health_check_interval: "60s"
+    cluster_health_threshold: 0.60  # 6 out of 10 nodes healthy
+    node_isolation_threshold: 3
+    alert_escalation_time: "15m"
+
+  # Factory Reset Policies
+  factory_reset:
+    triggers:
+      - "unrecoverable_boot_failure"
+      - "corrupted_filesystem"
+      - "health_check_failure"
+      - "manual_request"
+    safety_checks:
+      - "verify_bcm_enrollment"
+      - "backup_critical_data"
+      - "confirm_network_config"
+    max_concurrent_resets: 2
+
+  # Network Policies
+  network:
+    ethernet:
+      spanning_tree_enabled: false
+      vlan_isolation: false
+    connectivity_monitoring: true
+    default_route_validation: true
+
+# ==============================================================================
+# AUTOMATION WORKFLOWS
+# ==============================================================================
+automation:
+  # Node Lifecycle Management
+  node_lifecycle:
+    provision:
+      - "power_on"
+      - "network_configuration"
+      - "os_install"
+      - "bcm_enroll"
+      - "health_check"
+
+    factory_reset:
+      - "assess_node_state"
+      - "backup_configuration"
+      - "bcm_category_reset"
+      - "verify_provisioning"
+      - "network_configuration"
+      - "health_validation"
+
+# ==============================================================================
+# SECURITY CONFIGURATION
+# ==============================================================================
+security:
+  authentication:
+    method: "local"
+    domain: "cluster.local"
+
+  access_control:
+    admin_access: true
+    ssh_enabled: true
+    external_access_points:
+      - interface: "192.168.200.227"
+        ports: [22]
+
+  network_security:
+    internal_communication: true
+    service_isolation: false
+
+# ==============================================================================
+# OPERATIONAL PROCEDURES
+# ==============================================================================
+procedures:
+  emergency_shutdown:
+    trigger_conditions:
+      - "facility_power_loss"
+      - "security_incident"
+    shutdown_order:
+      1: "compute_nodes"
+      2: "head_node"
+
+  disaster_recovery:
+    rpo_target: "1h"
+    rto_target: "2h"
+    backup_systems:
+      - "bcm_configuration"
+      - "node_configurations"
+
+# ==============================================================================
+# CLUSTER ASSESSMENT SUMMARY
+# ==============================================================================
+current_state:
+  assessment_timestamp: "Mon Aug 11 06:27:34 PM CEST 2025"
+  total_devices: 11
+  networks_configured: 3
+  switches_found: 0
+
+  health_summary:
+    nodes_up: 11
+    nodes_healthy: 4  # node004, node006, node009, node010
+    nodes_with_health_issues: 7  # node001, node002, node003, node005, node007, node008, schecker-testcluster
+
+  network_summary:
+    internal_network: "10.141.0.0/16"
+    external_network: "192.168.200.0/24"
+    global_network: "0.0.0.0/0"
+
+  service_summary:
+    nfs_active: true
+    ldap_active: true
+    dns_active: true
+    postgresql_active: true
+    management_services_active: true
+
+  cmdaemon_status:
+    version: "3.1"
+    status: "active"
+    uptime: "3d 10h"
+    cpu_usage: "0.4%"
+    memory_usage: "121MB"
+    active_sessions: 18
+    requests_processed: 16052
