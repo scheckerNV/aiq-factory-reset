@@ -8,36 +8,39 @@ functions:
   # BCM Documentation RAG Tool with LlamaParse and Multi-Agent Workflow
   bcm_documentation_rag:
     _type: aiq_dgx_factory_reset/bcm_documentation_rag
+    max_tokens: 8192
+    response_mode: "tree_summarize"
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
     persist_dir: "examples/factory_reset/storage/bcm_index"
 
   networking_expert_rag:
     _type: aiq_dgx_factory_reset/networking_expert_rag
+    max_tokens: 8192
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert"
     persist_dir: "examples/factory_reset/storage/networking_index"
 
   network_assessment_tool:
     _type: aiq_dgx_factory_reset/network_assessment_tool
-    cluster_host: "schecker-testcluster"
+    cluster_host: "localhost"
     cluster_user: "root"
     timeout: 300
 
   network_results_reader:
     _type: aiq_dgx_factory_reset/network_results_reader
-    cluster_host: "schecker-testcluster"
+    cluster_host: "localhost"
     cluster_user: "root"
     results_directory: "/tmp/cluster_assessment_*"
 
-  network_workflow_orchestrator:
-    _type: aiq_dgx_factory_reset/network_workflow_orchestrator
-    max_retries: 1
-    quality_threshold: 0.2
+  #  network_workflow_orchestrator:
+  #   _type: aiq_dgx_factory_reset/network_workflow_orchestrator
+  #   max_retries: 1
+  #   quality_threshold: 0.2
 
-  networking_graph_agent:
-    _type: react_agent
-    tool_names:
-      - network_workflow_orchestrator  # Uses LangGraph internally
-    llm_name: reasoning_llm
+  # networking_graph_agent:
+  #   _type: react_agent
+  #   tool_names:
+  #     - network_workflow_orchestrator  # Uses LangGraph internally
+  #   llm_name: reasoning_llm
 
   networking_react_agent:
     _type: react_agent
@@ -56,14 +59,86 @@ llms:
   reasoning_llm:
     _type: nim
     model_name: meta/llama-3.1-70b-instruct
-    max_tokens: 4096
+    max_tokens: 8192
     temperature: 0.1
 
   execution_llm:
     _type: nim
     model_name: meta/llama-3.1-70b-instruct
-    max_tokens: 4096
+    max_tokens: 8192
     temperature: 0.1
 
 workflow:
-  _type: aiq_dgx_factory_reset/network_workflow_orchestrator
+  _type: reasoning_agent
+  llm_name: reasoning_llm
+  augmented_fn: networking_react_agent
+  verbose: true
+  reasoning_prompt_template: |
+    <think>
+    I need to analyze this networking request for a DGX SuperPOD factory reset operation.
+
+    Let me break down what I need to understand:
+
+    1. CONTEXT ANALYSIS:
+       - What type of networking operation is being requested?
+       - Is this a complete factory reset, partial reset, or analysis?
+       - What components of the network infrastructure are involved?
+       - Are there any specific DGX nodes or network segments mentioned?
+
+    2. INFORMATION REQUIREMENTS:
+       - What documentation do I need to reference?
+       - What current network state information is needed?
+       - What are the dependencies and prerequisites?
+       - What safety considerations are important?
+
+    3. EXECUTION PLANNING:
+       - What is the correct sequence of operations?
+       - What network components need to be reset first?
+       - How do I verify current state before making changes?
+       - What validation steps are needed after each operation?
+       - What are the rollback procedures if something goes wrong?
+
+    4. RISK ASSESSMENT:
+       - What are the potential impacts of network changes?
+       - How do I minimize downtime?
+       - What could go wrong and how to prevent it?
+       - Are there any dependencies on external systems?
+
+    5. OUTPUT PLANNING:
+       - What specific information should I gather?
+       - What format should the response be in?
+       - Should I provide step-by-step procedures or analysis?
+       - What level of detail is appropriate?
+
+    Based on this analysis, I need to create a comprehensive plan for the networking expert to execute.
+    </think>
+
+    You are analyzing a networking request for DGX SuperPOD factory reset operations.
+
+    Create a detailed execution plan that considers:
+    - Network infrastructure components involved
+    - Required documentation and configuration references
+    - Step-by-step operational sequence
+    - Safety considerations and validation steps
+    - Dependencies and prerequisites
+
+    Provide a clear, actionable plan for the networking expert to follow.
+
+  instruction_prompt_template: |
+    Based on the analysis above, execute this networking operation plan:
+
+    REASONING ANALYSIS:
+    {reasoning_output}
+
+    ORIGINAL REQUEST: {input_text}
+
+    EXECUTION INSTRUCTIONS:
+    Using your networking expertise and available tools, systematically execute the planned approach.
+
+    1. First, gather all necessary information about current network state
+    2. Reference relevant documentation for proper procedures
+    3. Provide specific, actionable recommendations or analysis
+    4. Include proper safety warnings and validation steps
+    5. Ensure network operations are sequenced correctly
+
+    Focus on providing comprehensive, accurate networking guidance that follows best practices for DGX SuperPOD environments.
