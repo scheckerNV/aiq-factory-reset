@@ -804,6 +804,7 @@ async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfi
 
     async def assessment_node(state: WorkflowState):
         """Use your existing assessment tool"""
+        logger.info("LangGraph: running assessment_node")
         assessment_tool = builder.get_function("network_assessment_tool")
         result = await assessment_tool.ainvoke(state["input"])
         return {**state, "assessment_complete": True, "assessment_data": result}
@@ -811,12 +812,17 @@ async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfi
     async def analysis_node(state: WorkflowState):
         """Use your existing results reader"""
         results_reader = builder.get_function("network_results_reader")
-        result = await results_reader.ainvoke("summary")
+        # Trigger a summary read of latest assessment results; input string is not used meaningfully
+        result = await results_reader.ainvoke("")
         return {**state, "analysis_complete": True, "analysis_data": result}
 
     async def research_node(state: WorkflowState):
         """Use your existing networking expert tool"""
-        query = f"Best practices for: {state['input']}"
+        # Ask for concrete, actionable guidance tailored to producing cmsh commands
+        query = ("DGX SuperPOD networking reset. "
+                 f"Task: {state['input']}. "
+                 "Return concise, actionable steps that directly lead to BCM cmsh commands. "
+                 "Avoid high-level prose.")
         networking_rag_tool = builder.get_function("networking_expert_rag")
         result = await networking_rag_tool.ainvoke(query)
         return {**state, "research_complete": True, "research_data": result}
@@ -824,18 +830,23 @@ async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfi
     async def command_generation_node(state: WorkflowState):
         """Use your existing BCM RAG tool"""
         bcm_rag_tool = builder.get_function("bcm_documentation_rag")
-        context = f"""
-        Assessment: {state.get('assessment_data', '')}
-        Analysis: {state.get('analysis_data', '')}
-        Research: {state.get('research_data', '')}
-
-        Generate specific BCM commands for: {state['input']}
-        """
+        context = ("Assessment Summary:\n" + (state.get('assessment_data', '') or '').strip() + "\n\n" +
+                   "Analysis Summary:\n" + (state.get('analysis_data', '') or '').strip() + "\n\n" +
+                   "Research Summary:\n" + (state.get('research_data', '') or '').strip() + "\n\n" + "Instruction:\n" +
+                   "Generate the EXACT Bright Cluster Manager commands, using cmsh -c, to revert " +
+                   "the cluster networking to a known good state.\n" + "Requirements:\n" +
+                   "- Output ONLY commands, one per line, no explanations.\n" +
+                   "- Each line MUST start with: cmsh -c \"\n" +
+                   "- Include necessary device/network/category contexts and commit where required.\n")
         result = await bcm_rag_tool.ainvoke(context)
 
-        # Simple quality check
-        command_count = len([line for line in result.split('\n') if 'cmsh' in line])
-        quality = min(1.0, command_count / 5)
+        # Improved quality: count lines that start with exact cmsh command prefix
+        cmsh_lines = []
+        for line in result.splitlines():
+            stripped = line.strip()
+            if stripped.startswith('cmsh -c "'):
+                cmsh_lines.append(stripped)
+        quality = min(1.0, len(cmsh_lines) / 5.0)
 
         return {
             **state,
