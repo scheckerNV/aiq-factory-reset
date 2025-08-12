@@ -31,6 +31,19 @@ functions:
     cluster_user: "root"
     results_directory: "/tmp/cluster_assessment_*"
 
+  hitl_code_approval:
+    _type: aiq_dgx_factory_reset/hitl_code_approval
+    prompt: "🔧 FACTORY RESET EXECUTION - Review these BCM commands that will be executed on schecker-testcluster"
+
+  bcm_executor:
+    _type: aiq_dgx_factory_reset/code_execution_with_approval
+    cluster_host: "localhost"        # if AIQ runs on the cluster head
+    cluster_user: "root"
+    timeout: 600
+    dry_run: true                    # switch to false when ready
+    hitl_approval_fn: hitl_code_approval
+    # coder_llm_name: qwen_coder     # optional, only if you add this LLM in `llms:`
+
   #  network_workflow_orchestrator:
   #   _type: aiq_dgx_factory_reset/network_workflow_orchestrator
   #   max_retries: 1
@@ -49,6 +62,8 @@ functions:
       - bcm_documentation_rag
       - network_assessment_tool
       - network_results_reader
+      - hitl_code_approval
+      - bcm_executor
     llm_name: execution_llm
     verbose: true
     parse_agent_response_max_retries: 3
@@ -137,8 +152,9 @@ workflow:
 
     1. First, gather all necessary information about current network state
     2. Reference relevant documentation for proper procedures
-    3. Provide specific, actionable recommendations or analysis
+    3. Provide specific, actionable BCM cmsh commands
     4. Include proper safety warnings and validation steps
     5. Ensure network operations are sequenced correctly
+    6. After generating BCM commands, call the bcm_executor tool with the exact commands for approval and execution.
 
     Focus on providing comprehensive, accurate networking guidance that follows best practices for DGX SuperPOD environments.
