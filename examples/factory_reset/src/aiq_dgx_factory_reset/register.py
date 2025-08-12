@@ -57,22 +57,22 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             from llama_index.core import load_index_from_storage
             from llama_index.embeddings.nvidia import NVIDIAEmbedding
             from llama_index.llms.nvidia import NVIDIA
-            from llama_parse import LlamaParse
 
+            # from llama_parse import LlamaParse  # Commented out - not used
             # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
-            llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
+            # llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")  # Not used
 
             if not nvidia_api_key:
                 return ("❌ NVIDIA API key not provided. Set NVIDIA_API_KEY "
                         "environment variable or provide in config.")
 
-            if not llama_api_key:
-                return ("❌ LLAMA_CLOUD_API_KEY not provided. Set LLAMA_CLOUD_API_KEY "
-                        "environment variable or provide in config.")
+                # if not llama_api_key:
+                # return ("❌ LLAMA_CLOUD_API_KEY not provided. Set LLAMA_CLOUD_API_KEY "
+                #         "environment variable or provide in config.")
 
             os.environ["NVIDIA_API_KEY"] = nvidia_api_key
-            os.environ["LLAMA_CLOUD_API_KEY"] = llama_api_key
+            # os.environ["LLAMA_CLOUD_API_KEY"] = llama_api_key
 
             # Configure LlamaIndex with NVIDIA models for accuracy
             Settings.llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
@@ -227,11 +227,11 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
             from llama_index.core import load_index_from_storage
             from llama_index.embeddings.nvidia import NVIDIAEmbedding
             from llama_index.llms.nvidia import NVIDIA
-            from llama_parse import LlamaParse
 
+            # from llama_parse import LlamaParse  # Commented out - not used
             # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
-            llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
+            # llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")  # Not used
 
             if not nvidia_api_key:
                 return ("❌ NVIDIA API key not provided. Set NVIDIA_API_KEY "
@@ -276,7 +276,7 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
                 #             except Exception as e:
                 #                 logger.warning("Failed to parse %s: %s", pdf_file, e)
 
-                pdf_files = list(docs_path_obj.glob("*.pdf"))
+                # pdf_files = list(docs_path_obj.glob("*.pdf"))  # Not used
                 # if pdf_files:
                 #     logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
                 #     # new code
@@ -447,22 +447,22 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
             from llama_index.core import load_index_from_storage
             from llama_index.embeddings.nvidia import NVIDIAEmbedding
             from llama_index.llms.nvidia import NVIDIA
-            from llama_parse import LlamaParse
 
+            # from llama_parse import LlamaParse  # Commented out - not used
             # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
-            llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
+            # llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")  # Not used
 
             if not nvidia_api_key:
                 return ("❌ NVIDIA API key not provided. Set NVIDIA_API_KEY "
                         "environment variable or provide in config.")
 
-            if not llama_api_key:
-                return ("❌ LLAMA_CLOUD_API_KEY not provided. Set LLAMA_CLOUD_API_KEY "
-                        "environment variable or provide in config.")
+                # if not llama_api_key:
+                # return ("❌ LLAMA_CLOUD_API_KEY not provided. Set LLAMA_CLOUD_API_KEY "
+                #         "environment variable or provide in config.")
 
             os.environ["NVIDIA_API_KEY"] = nvidia_api_key
-            os.environ["LLAMA_CLOUD_API_KEY"] = llama_api_key
+            # os.environ["LLAMA_CLOUD_API_KEY"] = llama_api_key
 
             # Configure LlamaIndex with NVIDIA models for accuracy
             Settings.llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
@@ -484,35 +484,35 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
                 docs_path_obj = Path(docs_path)
 
                 # Process PDF files with LlamaParse for high-quality extraction
-                pdf_files = list(docs_path_obj.glob("*.pdf"))
-                if pdf_files and llama_api_key:
-                    logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
-
-                    for pdf_file in pdf_files:
-                        try:
-                            logger.info("Processing %s individually...", pdf_file.name)
-
-                            # Create a fresh parser instance for each file
-                            file_parser = LlamaParse(verbose=True)
-                            pdf_docs = file_parser.load_data(str(pdf_file))
-
-                            for doc in pdf_docs:
-                                doc.metadata["source"] = str(pdf_file)
-                                doc.metadata["file_name"] = pdf_file.name
-
-                            documents.extend(pdf_docs)
-                            logger.info("Successfully processed %s (%d documents)", pdf_file.name, len(pdf_docs))
-
-                            # Clean up
-                            del file_parser
-
-                        except Exception as e:
-                            logger.warning("Failed to parse %s, skipping PDF processing: %s", pdf_file, e)
-                            logger.info("Continuing with other document types...")
-                            continue
-                elif pdf_files and not llama_api_key:
-                    logger.info("Found %d PDF files but no LlamaCloud API key provided, skipping PDF processing",
-                                len(pdf_files))
+                # pdf_files = list(docs_path_obj.glob("*.pdf"))  # Not used
+                # if pdf_files and llama_api_key:
+                #     logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
+                #
+                #     for pdf_file in pdf_files:
+                #         try:
+                #             logger.info("Processing %s individually...", pdf_file.name)
+                #
+                #             # Create a fresh parser instance for each file
+                #             file_parser = LlamaParse(verbose=True)
+                #             pdf_docs = file_parser.load_data(str(pdf_file))
+                #
+                #             for doc in pdf_docs:
+                #                 doc.metadata["source"] = str(pdf_file)
+                #                 doc.metadata["file_name"] = pdf_file.name
+                #
+                #             documents.extend(pdf_docs)
+                #             logger.info("Successfully processed %s (%d documents)", pdf_file.name, len(pdf_docs))
+                #
+                #             # Clean up
+                #             del file_parser
+                #
+                #         except Exception as e:
+                #             logger.warning("Failed to parse %s, skipping PDF processing: %s", pdf_file, e)
+                #             logger.info("Continuing with other document types...")
+                #             continue
+                # elif pdf_files and not llama_api_key:
+                #     logger.info("Found %d PDF files but no LlamaCloud API key provided, skipping PDF processing",
+                #                 len(pdf_files))
 
                 # Process YAML files (primary config files)
                 yaml_files = list(docs_path_obj.glob("*.yaml")) + list(docs_path_obj.glob("*.yml"))
@@ -615,7 +615,7 @@ class NetworkAssessmentToolConfig(FunctionBaseConfig, name="network_assessment_t
 async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder: Builder):
     """Comprehensive network assessment tool for BCM clusters"""
 
-    async def _run_network_assessment(input_message: str) -> str:
+    async def _run_network_assessment(_: str) -> str:
         """Execute comprehensive network assessment"""
         import asyncio
         import tempfile
@@ -742,7 +742,7 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                                                                stdout=asyncio.subprocess.PIPE,
                                                                stderr=asyncio.subprocess.PIPE)
 
-                stdout, stderr = await process.communicate()
+                stdout, _ = await process.communicate()  # stderr not used
 
                 if process.returncode == 0:
                     content = stdout.decode('utf-8')
@@ -770,3 +770,131 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
 
 print("✅ Networking Expert Network Reader tool registered successfully")
 
+# ========================
+# LangGraph Orchestrator
+# ========================
+
+
+class NetworkWorkflowOrchestratorConfig(FunctionBaseConfig, name="network_workflow_orchestrator"):
+    max_retries: int = Field(default=3, description="Maximum retry attempts")
+    quality_threshold: float = Field(default=0.6, description="Minimum quality score for commands")
+
+
+@register_function(config_type=NetworkWorkflowOrchestratorConfig)
+async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfig, builder: Builder):
+    """LangGraph orchestrator that uses your existing tools"""
+
+    from typing import TypedDict
+
+    from langgraph.graph import END
+    from langgraph.graph import StateGraph
+
+    # Get your existing amazing tools
+    assessment_tool = builder.get_function("network_assessment_tool")
+    bcm_rag_tool = builder.get_function("bcm_documentation_rag")
+    networking_rag_tool = builder.get_function("networking_expert_rag")
+    results_reader = builder.get_function("network_results_reader")
+
+    class WorkflowState(TypedDict):
+        input: str
+        assessment_complete: bool
+        commands_generated: bool
+        quality_score: float
+        retry_count: int
+        final_output: str
+
+    async def assessment_node(state: WorkflowState):
+        """Use your existing assessment tool"""
+        result = await assessment_tool.ainvoke(state["input"])
+        return {**state, "assessment_complete": True, "assessment_data": result}
+
+    async def analysis_node(state: WorkflowState):
+        """Use your existing results reader"""
+        result = await results_reader.ainvoke("summary")
+        return {**state, "analysis_complete": True, "analysis_data": result}
+
+    async def research_node(state: WorkflowState):
+        """Use your existing networking expert tool"""
+        query = f"Best practices for: {state['input']}"
+        result = await networking_rag_tool.ainvoke(query)
+        return {**state, "research_complete": True, "research_data": result}
+
+    async def command_generation_node(state: WorkflowState):
+        """Use your existing BCM RAG tool"""
+        context = f"""
+        Assessment: {state.get('assessment_data', '')}
+        Analysis: {state.get('analysis_data', '')}
+        Research: {state.get('research_data', '')}
+
+        Generate specific BCM commands for: {state['input']}
+        """
+        result = await bcm_rag_tool.ainvoke(context)
+
+        # Simple quality check
+        command_count = len([line for line in result.split('\n') if 'cmsh' in line])
+        quality = min(1.0, command_count / 5)
+
+        return {
+            **state,
+            "commands_generated": True,
+            "commands": result,
+            "quality_score": quality,
+            "retry_count": state.get("retry_count", 0) + 1
+        }
+
+    def should_retry(state: WorkflowState):
+        """Conditional logic: retry if quality is low"""
+        if (state["quality_score"] < config.quality_threshold and state["retry_count"] < config.max_retries):
+            return "retry_commands"
+        return "finalize"
+
+    async def finalize_node(state: WorkflowState):
+        return {**state, "final_output": state.get("commands", "No commands generated")}
+
+    # Build the LangGraph workflow
+    workflow = StateGraph(WorkflowState)
+
+    # Add nodes (using your existing tools)
+    workflow.add_node("assess", assessment_node)
+    workflow.add_node("analyze", analysis_node)
+    workflow.add_node("research", research_node)
+    workflow.add_node("generate_commands", command_generation_node)
+    workflow.add_node("finalize", finalize_node)
+
+    # Define the flow
+    workflow.set_entry_point("assess")
+    workflow.add_edge("assess", "analyze")
+    workflow.add_edge("analyze", "research")
+    workflow.add_edge("research", "generate_commands")
+
+    # Conditional edge with retry loop
+    workflow.add_conditional_edges(
+        "generate_commands",
+        should_retry,
+        {
+            "retry_commands": "generate_commands",  # Loop back
+            "finalize": "finalize"  # Exit
+        })
+
+    workflow.add_edge("finalize", END)
+
+    app = workflow.compile()
+
+    async def _orchestrated_workflow(input_text: str) -> str:
+        """Execute the LangGraph workflow using your existing tools"""
+        initial_state: WorkflowState = {
+            "input": input_text,
+            "assessment_complete": False,
+            "commands_generated": False,
+            "quality_score": 0.0,
+            "retry_count": 0,
+            "final_output": ""
+        }
+        result = await app.ainvoke(initial_state)
+        return result.get("final_output", "Workflow failed")
+
+    yield FunctionInfo.from_fn(_orchestrated_workflow,
+                               description="LangGraph orchestrator using existing network tools")
+
+
+print("✅ LangGraph Network Workflow Orchestrator registered successfully")
