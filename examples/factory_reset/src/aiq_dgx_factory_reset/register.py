@@ -615,7 +615,7 @@ class NetworkAssessmentToolConfig(FunctionBaseConfig, name="network_assessment_t
 async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder: Builder):
     """Comprehensive network assessment tool for BCM clusters"""
 
-    async def _run_network_assessment(_: str) -> str:
+    async def _run_network_assessment(input_message: str) -> str:
         """Execute comprehensive network assessment"""
         import asyncio
         import tempfile
@@ -789,11 +789,10 @@ async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfi
     from langgraph.graph import END
     from langgraph.graph import StateGraph
 
-    # Get your existing amazing tools
-    assessment_tool = builder.get_function("network_assessment_tool")
-    bcm_rag_tool = builder.get_function("bcm_documentation_rag")
-    networking_rag_tool = builder.get_function("networking_expert_rag")
-    results_reader = builder.get_function("network_results_reader")
+    # NOTE:
+    # Do NOT fetch tools at build time. The AIQ builder may construct this
+    # function before its dependencies, causing lookup failures.
+    # Instead, fetch tool handles lazily inside each node when executed.
 
     class WorkflowState(TypedDict):
         input: str
@@ -805,22 +804,26 @@ async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfi
 
     async def assessment_node(state: WorkflowState):
         """Use your existing assessment tool"""
+        assessment_tool = builder.get_function("network_assessment_tool")
         result = await assessment_tool.ainvoke(state["input"])
         return {**state, "assessment_complete": True, "assessment_data": result}
 
     async def analysis_node(state: WorkflowState):
         """Use your existing results reader"""
+        results_reader = builder.get_function("network_results_reader")
         result = await results_reader.ainvoke("summary")
         return {**state, "analysis_complete": True, "analysis_data": result}
 
     async def research_node(state: WorkflowState):
         """Use your existing networking expert tool"""
         query = f"Best practices for: {state['input']}"
+        networking_rag_tool = builder.get_function("networking_expert_rag")
         result = await networking_rag_tool.ainvoke(query)
         return {**state, "research_complete": True, "research_data": result}
 
     async def command_generation_node(state: WorkflowState):
         """Use your existing BCM RAG tool"""
+        bcm_rag_tool = builder.get_function("bcm_documentation_rag")
         context = f"""
         Assessment: {state.get('assessment_data', '')}
         Analysis: {state.get('analysis_data', '')}

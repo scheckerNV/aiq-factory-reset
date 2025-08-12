@@ -28,6 +28,11 @@ functions:
     cluster_user: "root"
     results_directory: "/tmp/cluster_assessment_*"
 
+  network_workflow_orchestrator:
+    _type: aiq_dgx_factory_reset/network_workflow_orchestrator
+    max_retries: 3
+    quality_threshold: 0.6
+
   networking_graph_agent:
     _type: react_agent
     tool_names:
