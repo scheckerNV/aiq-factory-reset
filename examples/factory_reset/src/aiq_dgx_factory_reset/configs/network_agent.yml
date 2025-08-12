@@ -44,6 +44,10 @@ functions:
     hitl_approval_fn: hitl_code_approval
     # coder_llm_name: qwen_coder     # optional, only if you add this LLM in `llms:`
 
+  network_factory_reset_orchestrator:
+    _type: aiq_dgx_factory_reset/network_factory_reset_orchestrator
+    perform_post_validation: true
+
   #  network_workflow_orchestrator:
   #   _type: aiq_dgx_factory_reset/network_workflow_orchestrator
   #   max_retries: 1
@@ -84,77 +88,4 @@ llms:
     temperature: 0.1
 
 workflow:
-  _type: reasoning_agent
-  llm_name: reasoning_llm
-  augmented_fn: networking_react_agent
-  verbose: true
-  reasoning_prompt_template: |
-    <think>
-    I need to analyze this networking request for a DGX SuperPOD factory reset operation.
-
-    Let me break down what I need to understand:
-
-    1. CONTEXT ANALYSIS:
-       - What type of networking operation is being requested?
-       - Is this a complete factory reset, partial reset, or analysis?
-       - What components of the network infrastructure are involved?
-       - Are there any specific DGX nodes or network segments mentioned?
-
-    2. INFORMATION REQUIREMENTS:
-       - What documentation do I need to reference?
-       - What current network state information is needed?
-       - What are the dependencies and prerequisites?
-       - What safety considerations are important?
-
-    3. EXECUTION PLANNING:
-       - What is the correct sequence of operations?
-       - What network components need to be reset first?
-       - How do I verify current state before making changes?
-       - What validation steps are needed after each operation?
-       - What are the rollback procedures if something goes wrong?
-
-    4. RISK ASSESSMENT:
-       - What are the potential impacts of network changes?
-       - How do I minimize downtime?
-       - What could go wrong and how to prevent it?
-       - Are there any dependencies on external systems?
-
-    5. OUTPUT PLANNING:
-       - What specific information should I gather?
-       - What format should the response be in?
-       - Should I provide step-by-step procedures or analysis?
-       - What level of detail is appropriate?
-
-    Based on this analysis, I need to create a comprehensive plan for the networking expert to execute.
-    </think>
-
-    You are analyzing a networking request for DGX SuperPOD factory reset operations.
-
-    Create a detailed execution plan that considers:
-    - Network infrastructure components involved
-    - Required documentation and configuration references
-    - Step-by-step operational sequence
-    - Safety considerations and validation steps
-    - Dependencies and prerequisites
-
-    Provide a clear, actionable plan for the networking expert to follow.
-
-  instruction_prompt_template: |
-    Based on the analysis above, execute this networking operation plan:
-
-    REASONING ANALYSIS:
-    {reasoning_output}
-
-    ORIGINAL REQUEST: {input_text}
-
-    EXECUTION INSTRUCTIONS:
-    Using your networking expertise and available tools, systematically execute the planned approach.
-
-    1. First, gather all necessary information about current network state
-    2. Reference relevant documentation for proper procedures
-    3. Provide specific, actionable BCM cmsh commands
-    4. Include proper safety warnings and validation steps
-    5. Ensure network operations are sequenced correctly
-    6. After generating BCM commands, call the bcm_executor tool with the exact commands for approval and execution.
-
-    Focus on providing comprehensive, accurate networking guidance that follows best practices for DGX SuperPOD environments.
+  _type: aiq_dgx_factory_reset/network_factory_reset_orchestrator
