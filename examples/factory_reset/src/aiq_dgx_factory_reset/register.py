@@ -7,7 +7,6 @@ using LlamaIndex, LlamaParse, and NVIDIA embeddings for high-quality RAG respons
 
 import logging
 import os
-import tempfile
 from pathlib import Path
 
 from pydantic import Field
@@ -58,22 +57,22 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             from llama_index.core import load_index_from_storage
             from llama_index.embeddings.nvidia import NVIDIAEmbedding
             from llama_index.llms.nvidia import NVIDIA
+            from llama_parse import LlamaParse
 
-            # from llama_parse import LlamaParse  # Commented out - not used
             # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
-            # llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")  # Not used
+            llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
 
             if not nvidia_api_key:
                 return ("❌ NVIDIA API key not provided. Set NVIDIA_API_KEY "
                         "environment variable or provide in config.")
 
-                # if not llama_api_key:
-                # return ("❌ LLAMA_CLOUD_API_KEY not provided. Set LLAMA_CLOUD_API_KEY "
-                #         "environment variable or provide in config.")
+            if not llama_api_key:
+                return ("❌ LLAMA_CLOUD_API_KEY not provided. Set LLAMA_CLOUD_API_KEY "
+                        "environment variable or provide in config.")
 
             os.environ["NVIDIA_API_KEY"] = nvidia_api_key
-            # os.environ["LLAMA_CLOUD_API_KEY"] = llama_api_key
+            os.environ["LLAMA_CLOUD_API_KEY"] = llama_api_key
 
             # Configure LlamaIndex with NVIDIA models for accuracy
             Settings.llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
@@ -228,11 +227,11 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
             from llama_index.core import load_index_from_storage
             from llama_index.embeddings.nvidia import NVIDIAEmbedding
             from llama_index.llms.nvidia import NVIDIA
+            from llama_parse import LlamaParse
 
-            # from llama_parse import LlamaParse  # Commented out - not used
             # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
-            # llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")  # Not used
+            llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
 
             if not nvidia_api_key:
                 return ("❌ NVIDIA API key not provided. Set NVIDIA_API_KEY "
@@ -277,7 +276,7 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
                 #             except Exception as e:
                 #                 logger.warning("Failed to parse %s: %s", pdf_file, e)
 
-                # pdf_files = list(docs_path_obj.glob("*.pdf"))  # Not used
+                pdf_files = list(docs_path_obj.glob("*.pdf"))
                 # if pdf_files:
                 #     logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
                 #     # new code
@@ -448,22 +447,22 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
             from llama_index.core import load_index_from_storage
             from llama_index.embeddings.nvidia import NVIDIAEmbedding
             from llama_index.llms.nvidia import NVIDIA
+            from llama_parse import LlamaParse
 
-            # from llama_parse import LlamaParse  # Commented out - not used
             # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
-            # llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")  # Not used
+            llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
 
             if not nvidia_api_key:
                 return ("❌ NVIDIA API key not provided. Set NVIDIA_API_KEY "
                         "environment variable or provide in config.")
 
-                # if not llama_api_key:
-                # return ("❌ LLAMA_CLOUD_API_KEY not provided. Set LLAMA_CLOUD_API_KEY "
-                #         "environment variable or provide in config.")
+            if not llama_api_key:
+                return ("❌ LLAMA_CLOUD_API_KEY not provided. Set LLAMA_CLOUD_API_KEY "
+                        "environment variable or provide in config.")
 
             os.environ["NVIDIA_API_KEY"] = nvidia_api_key
-            # os.environ["LLAMA_CLOUD_API_KEY"] = llama_api_key
+            os.environ["LLAMA_CLOUD_API_KEY"] = llama_api_key
 
             # Configure LlamaIndex with NVIDIA models for accuracy
             Settings.llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
@@ -485,35 +484,35 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
                 docs_path_obj = Path(docs_path)
 
                 # Process PDF files with LlamaParse for high-quality extraction
-                # pdf_files = list(docs_path_obj.glob("*.pdf"))  # Not used
-                # if pdf_files and llama_api_key:
-                #     logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
-                #
-                #     for pdf_file in pdf_files:
-                #         try:
-                #             logger.info("Processing %s individually...", pdf_file.name)
-                #
-                #             # Create a fresh parser instance for each file
-                #             file_parser = LlamaParse(verbose=True)
-                #             pdf_docs = file_parser.load_data(str(pdf_file))
-                #
-                #             for doc in pdf_docs:
-                #                 doc.metadata["source"] = str(pdf_file)
-                #                 doc.metadata["file_name"] = pdf_file.name
-                #
-                #             documents.extend(pdf_docs)
-                #             logger.info("Successfully processed %s (%d documents)", pdf_file.name, len(pdf_docs))
-                #
-                #             # Clean up
-                #             del file_parser
-                #
-                #         except Exception as e:
-                #             logger.warning("Failed to parse %s, skipping PDF processing: %s", pdf_file, e)
-                #             logger.info("Continuing with other document types...")
-                #             continue
-                # elif pdf_files and not llama_api_key:
-                #     logger.info("Found %d PDF files but no LlamaCloud API key provided, skipping PDF processing",
-                #                 len(pdf_files))
+                pdf_files = list(docs_path_obj.glob("*.pdf"))
+                if pdf_files and llama_api_key:
+                    logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
+
+                    for pdf_file in pdf_files:
+                        try:
+                            logger.info("Processing %s individually...", pdf_file.name)
+
+                            # Create a fresh parser instance for each file
+                            file_parser = LlamaParse(verbose=True)
+                            pdf_docs = file_parser.load_data(str(pdf_file))
+
+                            for doc in pdf_docs:
+                                doc.metadata["source"] = str(pdf_file)
+                                doc.metadata["file_name"] = pdf_file.name
+
+                            documents.extend(pdf_docs)
+                            logger.info("Successfully processed %s (%d documents)", pdf_file.name, len(pdf_docs))
+
+                            # Clean up
+                            del file_parser
+
+                        except Exception as e:
+                            logger.warning("Failed to parse %s, skipping PDF processing: %s", pdf_file, e)
+                            logger.info("Continuing with other document types...")
+                            continue
+                elif pdf_files and not llama_api_key:
+                    logger.info("Found %d PDF files but no LlamaCloud API key provided, skipping PDF processing",
+                                len(pdf_files))
 
                 # Process YAML files (primary config files)
                 yaml_files = list(docs_path_obj.glob("*.yaml")) + list(docs_path_obj.glob("*.yml"))
@@ -616,9 +615,10 @@ class NetworkAssessmentToolConfig(FunctionBaseConfig, name="network_assessment_t
 async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder: Builder):
     """Comprehensive network assessment tool for BCM clusters"""
 
-    async def _run_network_assessment(_input_message: str) -> str:
+    async def _run_network_assessment(input_message: str) -> str:
         """Execute comprehensive network assessment"""
-        import asyncio  # noqa: F401
+        import asyncio
+        import tempfile
 
         # Create the assessment script
         # Read the shell script content from the external file
@@ -742,7 +742,7 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                                                                stdout=asyncio.subprocess.PIPE,
                                                                stderr=asyncio.subprocess.PIPE)
 
-                stdout, _ = await process.communicate()  # stderr not used
+                stdout, stderr = await process.communicate()
 
                 if process.returncode == 0:
                     content = stdout.decode('utf-8')
@@ -1098,3 +1098,88 @@ async def code_execution_with_approval(config: CodeExecutionWithApprovalConfig, 
 
 
 print("✅ BCM Code Execution with Approval tool registered successfully")
+
+# ========================
+# Deterministic Orchestrator (no LangGraph)
+# ========================
+
+
+class NetworkFactoryResetOrchestratorConfig(FunctionBaseConfig, name="network_factory_reset_orchestrator"):
+    """Orchestrate assessment → docs → BCM commands → approval/execution → optional validation."""
+
+    perform_post_validation: bool = Field(default=True, description="Re-run results reader after execution")
+
+
+@register_function(config_type=NetworkFactoryResetOrchestratorConfig)
+async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestratorConfig, builder: Builder):
+    """Enforce tool call ordering independent of LLM plan."""
+
+    def _extract_cmsh_commands(text: str) -> str:
+        # Prefer strict line-based extraction
+        lines = []
+        for raw in text.splitlines():
+            s = raw.strip()
+            if s.startswith('cmsh -c "') or s.startswith("cmsh -c '"):
+                # remove trailing semicolons if present
+                lines.append(s.rstrip(';'))
+        if lines:
+            return "\n".join(lines)
+
+        # Fallback: split on semicolons if single-line
+        parts = [p.strip() for p in text.split(';')]
+        lines = [p for p in parts if p.startswith('cmsh -c "') or p.startswith("cmsh -c '")]
+        return "\n".join(lines)
+
+    async def _run(input_text: str) -> str:
+        # 1) Assessment first
+        assess = builder.get_function("network_assessment_tool")
+        assess_out = await assess.ainvoke("Run comprehensive network assessment and save results")
+
+        # 2) Read results summary
+        reader = builder.get_function("network_results_reader")
+        summary_out = await reader.ainvoke("summary")
+
+        # 3) Research concrete steps
+        net_rag = builder.get_function("networking_expert_rag")
+        research_query = ("DGX SuperPOD networking reset guidance. "
+                          "Return concise, actionable steps that lead to exact cmsh commands. "
+                          f"Original request: {input_text}")
+        research_out = await net_rag.ainvoke(research_query)
+
+        # 4) Generate exact BCM commands
+        bcm_rag = builder.get_function("bcm_documentation_rag")
+        bcm_query = (
+            "Generate the EXACT Bright Cluster Manager commands, using cmsh -c, to revert the cluster to a known good "
+            "network state. Requirements: output ONLY commands, one per line, no explanations; each line MUST start "
+            "with: cmsh -c \"; include device/network/category contexts and commit where required.")
+        commands_text = await bcm_rag.ainvoke(bcm_query)
+        commands_only = _extract_cmsh_commands(commands_text)
+        if not commands_only:
+            # If nothing matched, pass through raw text so the user can see and adjust
+            commands_only = commands_text.strip()
+
+        # 5) Execute with approval
+        executor = builder.get_function("bcm_executor")
+        exec_out = await executor.ainvoke(commands_only)
+
+        # 6) Optional post validation (read results again)
+        post_check = ""
+        if config.perform_post_validation:
+            post_check = await reader.ainvoke("summary")
+
+        # Assemble final output
+        sections = [
+            "✅ Network assessment:\n" + assess_out,
+            "📊 Assessment summary:\n" + summary_out,
+            "📚 Research guidance:\n" + research_out,
+            "🧰 Generated commands:\n" + commands_only,
+            "🚀 Execution result:\n" + exec_out,
+        ]
+        if post_check:
+            sections.append("🔎 Post-execution summary:\n" + post_check)
+        return "\n\n".join(sections)
+
+    yield FunctionInfo.from_fn(_run, description="Deterministic network factory-reset orchestrator")
+
+
+print("✅ Network Factory Reset Orchestrator registered successfully")
