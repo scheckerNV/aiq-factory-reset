@@ -1,0 +1,140 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Streamlined Network Agent with Automatic BCM Command Execution
+# Flow: Network Assessment → BCM Command Generation → Automatic Execution
+
+general:
+  use_uvloop: true
+
+functions:
+  # Core Network Assessment Tools
+  bcm_documentation_rag:
+    _type: aiq_dgx_factory_reset/bcm_documentation_rag
+    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
+    persist_dir: "examples/factory_reset/storage/bcm_index"
+
+  networking_expert_rag:
+    _type: aiq_dgx_factory_reset/networking_expert_rag
+    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert"
+    persist_dir: "examples/factory_reset/storage/networking_index"
+
+  network_assessment_tool:
+    _type: aiq_dgx_factory_reset/network_assessment_tool
+    cluster_host: "schecker-testcluster"
+    cluster_user: "root"
+    timeout: 300
+
+  network_results_reader:
+    _type: aiq_dgx_factory_reset/network_results_reader
+    cluster_host: "schecker-testcluster"
+    cluster_user: "root"
+    results_directory: "/tmp/cluster_assessment_*"
+
+  # Human Approval for Command Execution
+  hitl_code_approval:
+    _type: aiq_dgx_factory_reset/hitl_code_approval
+    prompt: "🔧 FACTORY RESET EXECUTION - Review these BCM commands that will be executed on schecker-testcluster"
+
+  # BCM Command Executor
+  bcm_executor:
+    _type: aiq_dgx_factory_reset/code_execution_with_approval
+    cluster_host: "schecker-testcluster"
+    cluster_user: "root"
+    timeout: 600
+    dry_run: false  # Live execution enabled since POC worked
+    coder_llm_name: qwen_coder
+    hitl_approval_fn: hitl_code_approval
+
+llms:
+  # Main reasoning LLM for network analysis
+  reasoning_llm:
+    _type: nim
+    model_name: meta/llama-3.1-70b-instruct
+    max_tokens: 4096
+    temperature: 0.1
+
+  # Qwen2.5 Coder for command validation
+  qwen_coder:
+    _type: nim
+    model_name: nvidia/qwen2.5-coder-32b-instruct
+    max_tokens: 4096
+    temperature: 0.1
+
+workflow:
+  _type: reasoning_agent
+  llm_name: reasoning_llm
+  augmented_fn: network_execution_agent
+  verbose: true
+  reasoning_prompt_template: |
+    <think>
+    I need to execute a complete network factory reset workflow:
+
+    1. ASSESS CURRENT STATE:
+       - Run network assessment to gather current cluster state
+       - Identify what needs to be reset or corrected
+
+    2. GENERATE BCM COMMANDS:
+       - Use BCM documentation to generate appropriate commands
+       - Focus on commands that will restore the network to a known good state
+
+    3. EXECUTE COMMANDS:
+       - Use the bcm_executor to run the generated commands
+       - Ensure human approval before execution
+       - Validate results after execution
+
+    This is a complete end-to-end workflow, not just analysis.
+    </think>
+
+    You are executing a complete DGX SuperPOD network factory reset workflow.
+
+    Your goal is to:
+    1. Assess the current network state
+    2. Generate appropriate BCM commands to restore/reset the network
+    3. Execute those commands with human approval
+    4. Validate the results
+
+    Create a plan that will take the cluster from its current state to a clean, known-good network configuration.
+
+  instruction_prompt_template: |
+    Execute this complete network factory reset workflow:
+
+    ANALYSIS: {reasoning_output}
+    REQUEST: {input_text}
+
+    EXECUTION WORKFLOW:
+
+    Step 1: NETWORK ASSESSMENT
+    - Use network_assessment_tool to gather current cluster state
+    - Use network_results_reader to analyze the assessment data
+
+    Step 2: COMMAND GENERATION
+    - Use networking_expert_rag and bcm_documentation_rag to research proper procedures
+    - Generate specific BCM commands to address identified issues
+
+    Step 3: COMMAND EXECUTION
+    - Use bcm_executor to execute the generated commands
+    - The tool will validate commands with Qwen2.5 Coder
+    - You will be prompted to approve before execution
+    - Results will be provided after execution
+
+    Step 4: VALIDATION
+    - Verify that the network changes were applied successfully
+    - Document any remaining issues or next steps
+
+    IMPORTANT: This is a complete workflow - proceed through all steps including EXECUTION of the BCM commands.
+
+# React Agent Configuration for Tool Orchestration
+functions:
+  network_execution_agent:
+    _type: react_agent
+    tool_names:
+      - network_assessment_tool
+      - network_results_reader
+      - networking_expert_rag
+      - bcm_documentation_rag
+      - bcm_executor
+    llm_name: reasoning_llm
+    verbose: true
+    parse_agent_response_max_retries: 3
+    retry_agent_response_parsing_errors: true
