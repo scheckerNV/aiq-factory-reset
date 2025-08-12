@@ -784,10 +784,25 @@ class NetworkWorkflowOrchestratorConfig(FunctionBaseConfig, name="network_workfl
 async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfig, builder: Builder):
     """LangGraph orchestrator that uses your existing tools"""
 
+    import re
     from typing import TypedDict
 
     from langgraph.graph import END
     from langgraph.graph import StateGraph
+
+    def extract_user_input(inp: str | dict) -> str:
+        """Extract raw user question from Reasoning Agent plan or pass-through dict."""
+        if isinstance(inp, dict):
+            if "input_text" in inp:
+                return str(inp["input_text"]).strip()
+            for v in inp.values():
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+            return str(inp)
+        if isinstance(inp, str):
+            m = re.search(r'ORIGINAL REQUEST:\s*\{.*?"content":\s*"([^"]+)"', inp, re.S)
+            return m.group(1).strip() if m else inp.strip()
+        return str(inp).strip()
 
     # NOTE:
     # Do NOT fetch tools at build time. The AIQ builder may construct this
@@ -806,7 +821,8 @@ async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfi
         """Use your existing assessment tool"""
         logger.info("LangGraph: running assessment_node")
         assessment_tool = builder.get_function("network_assessment_tool")
-        result = await assessment_tool.ainvoke(state["input"])
+        task = extract_user_input(state["input"])
+        result = await assessment_tool.ainvoke(task)
         return {**state, "assessment_complete": True, "assessment_data": result}
 
     async def analysis_node(state: WorkflowState):
@@ -819,8 +835,9 @@ async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfi
     async def research_node(state: WorkflowState):
         """Use your existing networking expert tool"""
         # Ask for concrete, actionable guidance tailored to producing cmsh commands
+        task = extract_user_input(state["input"])
         query = ("DGX SuperPOD networking reset. "
-                 f"Task: {state['input']}. "
+                 f"Task: {task}. "
                  "Return concise, actionable steps that directly lead to BCM cmsh commands. "
                  "Avoid high-level prose.")
         networking_rag_tool = builder.get_function("networking_expert_rag")
@@ -830,11 +847,12 @@ async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfi
     async def command_generation_node(state: WorkflowState):
         """Use your existing BCM RAG tool"""
         bcm_rag_tool = builder.get_function("bcm_documentation_rag")
+        task = extract_user_input(state["input"])
         context = ("Assessment Summary:\n" + (state.get('assessment_data', '') or '').strip() + "\n\n" +
                    "Analysis Summary:\n" + (state.get('analysis_data', '') or '').strip() + "\n\n" +
                    "Research Summary:\n" + (state.get('research_data', '') or '').strip() + "\n\n" + "Instruction:\n" +
-                   "Generate the EXACT Bright Cluster Manager commands, using cmsh -c, to revert " +
-                   "the cluster networking to a known good state.\n" + "Requirements:\n" +
+                   f"Generate the EXACT Bright Cluster Manager commands, using cmsh -c, for task: {task}.\n" +
+                   "Revert the cluster networking to a known good state.\n" + "Requirements:\n" +
                    "- Output ONLY commands, one per line, no explanations.\n" +
                    "- Each line MUST start with: cmsh -c \"\n" +
                    "- Include necessary device/network/category contexts and commit where required.\n")
