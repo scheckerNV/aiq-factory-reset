@@ -309,21 +309,21 @@ cmsh -c "category use destination; roles; use ROLE_NAME; import source_category"
 
 ## Overview
 
-This chapter provides comprehensive BCM network configuration commands for complex multi-fabric clusters like the demeter DGX H100 BasePOD. Covers management networks, InfiniBand fabrics, BMC interfaces, and VLAN configurations.
+This chapter provides comprehensive BCM network configuration commands for complex multi-fabric clusters. Covers management networks, InfiniBand fabrics, BMC interfaces, and VLAN configurations.
 
 ## Core Network Types in BCM
 
 ### Default Networks
 
-- **internalnet**: Primary internal cluster network and default management network  
-- **externalnet**: Network connecting cluster to outside world (corporate/campus network)  
+- **internalnet**: Primary internal cluster network and default management network
+- **externalnet**: Network connecting cluster to outside world (corporate/campus network)
 - **globalnet**: Special network for domain name resolution (cloud/non-cloud nodes)
 
-### Custom Networks for Demeter Cluster
+### Example Custom Networks (Template)
 
-- **Management Network**: In-band management (10.184.164.0/24)  
-- **BMC Networks**: IPMI-1 (10.184.165.0/25) and IPMI-2 (10.184.165.128/25)  
-- **InfiniBand Fabrics**: Compute (100.126.0.0/16) and Storage (100.127.0.0/16)
+- **Management Network**: In-band management (MGMT_CIDR)
+- **BMC Networks**: IPMI-1 (BMC1_CIDR) and IPMI-2 (BMC2_CIDR)
+- **InfiniBand Fabrics**: Compute (COMPUTE_IB_CIDR) and Storage (STORAGE_IB_CIDR)
 
 ## Detailed Network Configuration Commands
 
@@ -595,7 +595,7 @@ cmsh -c "device connectivity --network NETWORK_NAME"
 /cm/local/apps/cmd/scripts/cm-iperf.py -n node001..node010 --count 10 -r -p 2
 
 # BMC connectivity testing
-for i in $(cmsh -c "device; foreach -t physicalnode (interfaces; use ipmi0; get ip)"); do 
+for i in $(cmsh -c "device; foreach -t physicalnode (interfaces; use ipmi0; get ip)"); do
   ping -c1 $i
 done | grep -B1 packet
 ```
@@ -632,58 +632,58 @@ cmsh -c "device foreach -c CATEGORY (interfaces; list)" | grep NETWORK_NAME
 cmsh -c "device foreach (!nslookup HOSTNAME)"
 ```
 
-## Demeter Cluster Specific Commands
+## Cluster-Specific Example (Template)
 
-### Complete Demeter Network Setup
+### Complete Management/IB/BMC Network Setup (Fill with your cluster values)
 
 ```shell
 # 1. Management Network Setup
 cmsh -c "network add managementnet"
-cmsh -c "network use managementnet; set baseaddress 10.184.164.0; set netmaskbits 24"
-cmsh -c "network use managementnet; set gateway 10.184.164.1; set domainname demeter.local"
+cmsh -c "network use managementnet; set baseaddress MGMT_BASE; set netmaskbits MGMT_BITS"
+cmsh -c "network use managementnet; set gateway MGMT_GW; set domainname MGMT_DOMAIN"
 cmsh -c "network use managementnet; set type internal; commit"
 
 # 2. IPMI Networks Setup
 cmsh -c "network add oobmanagementnet"
-cmsh -c "network use oobmanagementnet; set baseaddress 10.184.165.0; set netmaskbits 25"
-cmsh -c "network use oobmanagementnet; set gateway 10.184.165.1; commit"
+cmsh -c "network use oobmanagementnet; set baseaddress BMC1_BASE; set netmaskbits BMC1_BITS"
+cmsh -c "network use oobmanagementnet; set gateway BMC1_GW; commit"
 
-cmsh -c "network add oobmanagementnet2"  
-cmsh -c "network use oobmanagementnet2; set baseaddress 10.184.165.128; set netmaskbits 25"
-cmsh -c "network use oobmanagementnet2; set gateway 10.184.165.129; commit"
+cmsh -c "network add oobmanagementnet2"
+cmsh -c "network use oobmanagementnet2; set baseaddress BMC2_BASE; set netmaskbits BMC2_BITS"
+cmsh -c "network use oobmanagementnet2; set gateway BMC2_GW; commit"
 
 # 3. InfiniBand Networks Setup
 cmsh -c "network add computenet"
-cmsh -c "network use computenet; set baseaddress 100.126.0.0; set netmaskbits 16"
-cmsh -c "network use computenet; set domainname compute.demeter.local; set mtu 4096; commit"
+cmsh -c "network use computenet; set baseaddress COMPUTE_BASE; set netmaskbits COMPUTE_BITS"
+cmsh -c "network use computenet; set domainname COMPUTE_DOMAIN; set mtu 4096; commit"
 
 cmsh -c "network add storagenet"
-cmsh -c "network use storagenet; set baseaddress 100.127.0.0; set netmaskbits 16"  
-cmsh -c "network use storagenet; set domainname storage.demeter.local; set mtu 4096; commit"
+cmsh -c "network use storagenet; set baseaddress STORAGE_BASE; set netmaskbits STORAGE_BITS"
+cmsh -c "network use storagenet; set domainname STORAGE_DOMAIN; set mtu 4096; commit"
 
 # 4. Management Node Interfaces
-cmsh -c "device use demeter-mgmt-1; interfaces; add physical eth0"
-cmsh -c "device use demeter-mgmt-1; interfaces use eth0; set network managementnet"
-cmsh -c "device use demeter-mgmt-1; interfaces use eth0; set ip 10.184.164.51; commit"
+cmsh -c "device use HEADNODE_HOSTNAME; interfaces; add physical eth0"
+cmsh -c "device use HEADNODE_HOSTNAME; interfaces use eth0; set network managementnet"
+cmsh -c "device use HEADNODE_HOSTNAME; interfaces use eth0; set ip HEADNODE_MGMT_IP; commit"
 
 # 5. DGX Node Interfaces (example for dgx-01)
-cmsh -c "device use dgx-01; interfaces; add physical eth0"
-cmsh -c "device use dgx-01; interfaces use eth0; set network managementnet"
-cmsh -c "device use dgx-01; interfaces use eth0; set ip 10.184.164.10; commit"
+cmsh -c "device use NODE_EXAMPLE; interfaces; add physical eth0"
+cmsh -c "device use NODE_EXAMPLE; interfaces use eth0; set network managementnet"
+cmsh -c "device use NODE_EXAMPLE; interfaces use eth0; set ip NODE_MGMT_IP; commit"
 
-cmsh -c "device use dgx-01; interfaces; add bmc ipmi0"
-cmsh -c "device use dgx-01; interfaces use ipmi0; set network oobmanagementnet2"
-cmsh -c "device use dgx-01; interfaces use ipmi0; set ip 10.184.165.130; commit"
+cmsh -c "device use NODE_EXAMPLE; interfaces; add bmc ipmi0"
+cmsh -c "device use NODE_EXAMPLE; interfaces use ipmi0; set network oobmanagementnet2"
+cmsh -c "device use NODE_EXAMPLE; interfaces use ipmi0; set ip NODE_BMC_IP; commit"
 ```
 
 ### Mass Configuration for All DGX Nodes
 
 ```shell
-# Configure all 31 DGX nodes at once
-cmsh -c "device addinterface -n dgx-01..dgx-31 physical eth0 managementnet 10.184.164.10"
-cmsh -c "device addinterface -n dgx-01..dgx-31 bmc ipmi0 oobmanagementnet2 10.184.165.130"
-cmsh -c "device addinterface -n dgx-01..dgx-31 physical ib0 computenet 100.126.0.1"
-cmsh -c "device addinterface -n dgx-01..dgx-31 physical ib1 storagenet 100.127.0.1"
+# Configure a range of nodes (example)
+cmsh -c "device addinterface -n node001..nodeNNN physical eth0 managementnet FIRST_MGMT_IP"
+cmsh -c "device addinterface -n node001..nodeNNN bmc ipmi0 oobmanagementnet2 FIRST_BMC_IP"
+cmsh -c "device addinterface -n node001..nodeNNN physical ib0 computenet FIRST_COMPUTE_IP"
+cmsh -c "device addinterface -n node001..nodeNNN physical ib1 storagenet FIRST_STORAGE_IP"
 cmsh -c "device commit"
 ```
 
@@ -718,7 +718,7 @@ cmsh -c "partition use base; bmcsettings; set username USER; set password PASS; 
 
 ## Overview
 
-Power management in BCM includes controlling main power supply through PDUs, BMCs, monitoring power consumption, and ensuring safe failover operations. Critical for DGX H100 node resets and firmware updates in the demeter cluster.
+Power management in BCM includes controlling main power supply through PDUs, BMCs, monitoring power consumption, and ensuring safe failover operations. Critical for DGX node resets and firmware updates in production clusters.
 
 ## Power Control Methods
 
@@ -766,7 +766,7 @@ cmsh -c "device use node001; power status"
 # HP iLO configuration
 cmsh -c "device foreach -c hpe-nodes (set powercontrol ilo0; commit)"
 
-# Dell DRAC configuration  
+# Dell DRAC configuration
 cmsh -c "device foreach -c dell-nodes (set powercontrol drac0; commit)"
 
 # Cisco CIMC configuration
@@ -825,7 +825,7 @@ cmsh -c "device power status -c dgx-h100"
 cmsh -c "device power on -g compute-nodes"
 cmsh -c "device power off -g storage-nodes"
 
-# Power operations by rack (demeter cluster rack management)
+# Power operations by rack (example cluster rack management)
 cmsh -c "device power on -r rack01"
 cmsh -c "device power off -r rack01..rack04"
 ```
@@ -951,69 +951,6 @@ cmsh -c "device power reset --after 30 -n dgx001"   # 30 second delay for reset
 cmsh -c "device power on -p 2 --parallel-delay 60 rack[01-04]"  # 2 DGX at a time
 ```
 
-### Demeter Cluster Power Management
-
-```shell
-# Based on demeter-desired-state.yaml structure
-# Management network: 10.184.164.0/24
-# IPMI-1: 10.184.165.0/25  
-# IPMI-2: 10.184.165.128/25
-
-# Configure demeter DGX nodes for IPMI power control
-cmsh -c "device foreach -c dgx-h100 (set powercontrol ipmi0; commit)"
-
-# Power operations for demeter compute nodes
-cmsh -c "device power status -g compute-fabric"
-cmsh -c "device power on -g storage-fabric -d 3.0"
-
-# Staggered power-up for demeter cluster
-cmsh -c "device power on -p 1 --parallel-delay 120 -c dgx-h100"  # 1 DGX every 2 minutes
-```
-
-## Combined PDU and IPMI Power Control
-
-### PowerOffPDUOutlet Configuration
-
-```shell
-# Enable PDU outlet power-off after IPMI shutdown (saves additional watts)
-# Edit /cm/local/apps/cmd/etc/cmd.conf
-# Set: PowerOffPDUOutlet = true
-# Restart CMDaemon: systemctl restart cmd
-
-# This configuration:
-# 1. Sends IPMI power off command
-# 2. Subsequently powers off PDU port  
-# 3. Shuts down BMC to save power
-# 4. Requires BIOS auto-power-on when AC restored
-```
-
-## Emergency Power Operations
-
-### Emergency Shutdown Procedures
-
-```shell
-# Emergency shutdown all compute nodes
-cmsh -c "device power off -c dgx-h100 -d 0.5"
-
-# Emergency shutdown by rack (staggered)
-cmsh -c "device power off -r rack01..rack04 -p 1 --parallel-delay 10"
-
-# Force shutdown unresponsive nodes
-cmsh -c "device power -f off -s 'CLOSED|DOWN' -c dgx-h100"
-```
-
-### Recovery Procedures
-
-```shell
-# Staged recovery power-up
-cmsh -c "device power on -p 1 --parallel-delay 300 -c dgx-h100"  # 5-minute intervals
-
-# Check power status during recovery
-watch -n 10 'cmsh -c "device power status -c dgx-h100"'
-
-# Verify all nodes powered up successfully
-cmsh -c "device power status -c dgx-h100" | grep -v "ON" || echo "All nodes online"
-```
 
 ## Best Practices for DGX Infrastructure
 
@@ -1681,4 +1618,3 @@ cmsh -c "category use CATEGORY; biossettings; set boot mode 'uefi mode'; commit"
 # Monitor DGX firmware progress
 cmsh -c "device firmware status -n node001" | grep nvfw
 ```
-

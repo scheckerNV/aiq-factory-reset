@@ -1130,6 +1130,20 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
         lines = [p for p in parts if p.startswith('cmsh -c "') or p.startswith("cmsh -c '")]
         return "\n".join(lines)
 
+    def _filter_placeholders(cmds: list[str]) -> list[str]:
+        forbidden_substrings = [
+            "NODE_NAME",
+            "INTERFACE",
+            "HEAD_NODE",
+            "ROUTE_NAME"
+        ]
+        filtered: list[str] = []
+        for c in cmds:
+            if any(tok in c for tok in forbidden_substrings):
+                continue
+            filtered.append(c)
+        return filtered
+
     async def _run(input_text: str) -> str:
         # 1) Assessment first
         assess = builder.get_function("network_assessment_tool")
@@ -1139,24 +1153,42 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
         reader = builder.get_function("network_results_reader")
         summary_out = await reader.ainvoke("summary")
 
-        # 3) Research concrete steps
+        # 3) Research concrete steps (context-aware)
         net_rag = builder.get_function("networking_expert_rag")
-        research_query = ("DGX SuperPOD networking reset guidance. "
-                          "Return concise, actionable steps that lead to exact cmsh commands. "
-                          f"Original request: {input_text}")
+        research_query = (
+            "DGX SuperPOD networking reset guidance. "
+            "Return concise, actionable steps that lead to exact cmsh commands. "
+            "Use the following context from a fresh assessment summary to ground hostnames and networks.\n\n"
+            f"Assessment Summary:\n{summary_out}\n\n"
+            f"Original request: {input_text}")
         research_out = await net_rag.ainvoke(research_query)
 
         # 4) Generate exact BCM commands
         bcm_rag = builder.get_function("bcm_documentation_rag")
-        bcm_query = (
-            "Generate the EXACT Bright Cluster Manager commands, using cmsh -c, to revert the cluster to a known good "
-            "network state. Requirements: output ONLY commands, one per line, no explanations; each line MUST start "
-            "with: cmsh -c \"; include device/network/category contexts and commit where required.")
+        bcm_query = ("Generate the EXACT Bright Cluster Manager commands (cmsh -c) to revert THIS cluster to a known "
+                     "good network state.\n"
+                     "STRICT REQUIREMENTS:\n"
+                     "- Output ONLY commands, one per line, no explanations.\n"
+                     "- Each line MUST start with: cmsh -c \"\n"
+                     "- DO NOT use placeholders like NODE_NAME/INTERFACE/HEAD_NODE/ROUTE_NAME. Replace with actual "
+                     "node and interface names from the context.\n"
+                     "- DO NOT use any 'demeter' hostnames or domains.\n"
+                     "- Include device/network/category contexts and commit where required.\n\n"
+                     f"Context - Assessment Summary:\n{summary_out}\n\n"
+                     f"Context - Research Guidance:\n{research_out}")
         commands_text = await bcm_rag.ainvoke(bcm_query)
-        commands_only = _extract_cmsh_commands(commands_text)
-        if not commands_only:
-            # If nothing matched, pass through raw text so the user can see and adjust
-            commands_only = commands_text.strip()
+        extracted = _extract_cmsh_commands(commands_text)
+        cmds_list = [c for c in extracted.splitlines() if c.strip()]
+        cmds_list = _filter_placeholders(cmds_list)
+
+        # Retry once with stricter instruction if we filtered everything out
+        if not cmds_list:
+            stricter_query = bcm_query + "\n\nIf uncertain, default to safe READ-ONLY diagnostic cmsh commands with real hostnames."
+            commands_text_2 = await bcm_rag.ainvoke(stricter_query)
+            extracted_2 = _extract_cmsh_commands(commands_text_2)
+            cmds_list = _filter_placeholders([c for c in extracted_2.splitlines() if c.strip()])
+
+        commands_only = "\n".join(cmds_list) if cmds_list else extracted.strip() or commands_text.strip()
 
         # 5) Execute with approval
         executor = builder.get_function("bcm_executor")
