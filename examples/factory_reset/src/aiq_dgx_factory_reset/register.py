@@ -819,9 +819,17 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
         """Extract network configuration directly from YAML config file"""
         try:
             # Find the config file
+            logger.info(f"🔍 Looking for config files in: {networking_docs_path}")
             config_files = glob.glob(f"{networking_docs_path}/*_config.yaml")
+            logger.info(f"🔍 Found config files: {config_files}")
             if not config_files:
-                return "No network config YAML found in docs/networking_expert/"
+                # Try absolute path resolution
+                abs_path = os.path.abspath(networking_docs_path)
+                logger.info(f"🔍 Trying absolute path: {abs_path}")
+                config_files = glob.glob(f"{abs_path}/*_config.yaml")
+                logger.info(f"🔍 Found with absolute path: {config_files}")
+                if not config_files:
+                    return f"No network config YAML found in {networking_docs_path}/ or {abs_path}/"
 
             config_file = config_files[0]  # Use first found
             logger.info(f"📋 Reading network config from: {config_file}")
