@@ -426,7 +426,7 @@ class NetworkingExpertRAGConfig(FunctionBaseConfig, name="networking_expert_rag"
 @register_function(config_type=NetworkingExpertRAGConfig)
 async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Builder):
     """
-    Search Netowrking documentation using accurate RAG retrieval
+    Search Networking documentation using accurate RAG retrieval
     """
 
     async def _search_networking_docs(query: str) -> str:
@@ -743,7 +743,7 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                                                                stdout=asyncio.subprocess.PIPE,
                                                                stderr=asyncio.subprocess.PIPE)
 
-                stdout, _stderr = await process.communicate()
+                stdout, stderr = await process.communicate()
 
                 if process.returncode == 0:
                     content = stdout.decode('utf-8')
