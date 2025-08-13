@@ -40,7 +40,7 @@ functions:
     cluster_host: "localhost"        # if AIQ runs on the cluster head
     cluster_user: "root"
     timeout: 600
-    dry_run: true                    # switch to false when ready
+    dry_run: false                    # switch to false when ready
     hitl_approval_fn: hitl_code_approval
     # coder_llm_name: qwen_coder     # optional, only if you add this LLM in `llms:`
 
