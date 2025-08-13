@@ -57,8 +57,8 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             from llama_index.core import load_index_from_storage
             from llama_index.embeddings.nvidia import NVIDIAEmbedding
             from llama_index.llms.nvidia import NVIDIA
-            from llama_parse import LlamaParse
 
+            # from llama_parse import LlamaParse  # Not currently used
             # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
             llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
@@ -227,8 +227,8 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
             from llama_index.core import load_index_from_storage
             from llama_index.embeddings.nvidia import NVIDIAEmbedding
             from llama_index.llms.nvidia import NVIDIA
-            from llama_parse import LlamaParse
 
+            # from llama_parse import LlamaParse  # Not currently used
             # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
             llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
@@ -447,8 +447,8 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
             from llama_index.core import load_index_from_storage
             from llama_index.embeddings.nvidia import NVIDIAEmbedding
             from llama_index.llms.nvidia import NVIDIA
-            from llama_parse import LlamaParse
 
+            # from llama_parse import LlamaParse  # Not currently used
             # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
             llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
@@ -491,20 +491,21 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
                     for pdf_file in pdf_files:
                         try:
                             logger.info("Processing %s individually...", pdf_file.name)
+                            logger.warning("PDF processing currently disabled - LlamaParse not imported")
+                            continue
+                            # # Create a fresh parser instance for each file
+                            # file_parser = LlamaParse(verbose=True)
+                            # pdf_docs = file_parser.load_data(str(pdf_file))
 
-                            # Create a fresh parser instance for each file
-                            file_parser = LlamaParse(verbose=True)
-                            pdf_docs = file_parser.load_data(str(pdf_file))
+                            # for doc in pdf_docs:
+                            #     doc.metadata["source"] = str(pdf_file)
+                            #     doc.metadata["file_name"] = pdf_file.name
 
-                            for doc in pdf_docs:
-                                doc.metadata["source"] = str(pdf_file)
-                                doc.metadata["file_name"] = pdf_file.name
+                            # documents.extend(pdf_docs)
+                            # logger.info("Successfully processed %s (%d documents)", pdf_file.name, len(pdf_docs))
 
-                            documents.extend(pdf_docs)
-                            logger.info("Successfully processed %s (%d documents)", pdf_file.name, len(pdf_docs))
-
-                            # Clean up
-                            del file_parser
+                            # # Clean up
+                            # del file_parser
 
                         except Exception as e:
                             logger.warning("Failed to parse %s, skipping PDF processing: %s", pdf_file, e)
@@ -615,7 +616,7 @@ class NetworkAssessmentToolConfig(FunctionBaseConfig, name="network_assessment_t
 async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder: Builder):
     """Comprehensive network assessment tool for BCM clusters"""
 
-    async def _run_network_assessment(input_message: str) -> str:
+    async def _run_network_assessment(_input_message: str) -> str:
         """Execute comprehensive network assessment"""
         import asyncio
         import tempfile
@@ -742,7 +743,7 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                                                                stdout=asyncio.subprocess.PIPE,
                                                                stderr=asyncio.subprocess.PIPE)
 
-                stdout, stderr = await process.communicate()
+                stdout, _stderr = await process.communicate()
 
                 if process.returncode == 0:
                     content = stdout.decode('utf-8')
@@ -776,8 +777,8 @@ print("✅ Networking Expert Network Reader tool registered successfully")
 
 
 class NetworkWorkflowOrchestratorConfig(FunctionBaseConfig, name="network_workflow_orchestrator"):
-    max_retries: int = Field(default=3, description="Maximum retry attempts")
-    quality_threshold: float = Field(default=0.6, description="Minimum quality score for commands")
+    max_retries: int = Field(default=1, description="Maximum retry attempts")  # Reduced from 3 to 1
+    quality_threshold: float = Field(default=0.3, description="Minimum quality score for commands")  # Lowered threshold
 
 
 @register_function(config_type=NetworkWorkflowOrchestratorConfig)
@@ -877,7 +878,7 @@ async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfi
     def should_retry(state: WorkflowState):
         """Conditional logic: retry if quality is low"""
         if (state["quality_score"] < config.quality_threshold and state["retry_count"] < config.max_retries):
-            return "retry_commands"
+            return "generate_commands"  # Fixed: was "retry_commands"
         return "finalize"
 
     async def finalize_node(state: WorkflowState):
@@ -904,7 +905,7 @@ async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfi
         "generate_commands",
         should_retry,
         {
-            "retry_commands": "generate_commands",  # Loop back
+            "generate_commands": "generate_commands",  # Loop back - Fixed mapping
             "finalize": "finalize"  # Exit
         })
 
@@ -993,6 +994,8 @@ async def code_execution_with_approval(config: CodeExecutionWithApprovalConfig, 
     import asyncio
 
     async def _execute(bcm_commands: str) -> str:
+        import tempfile
+
         if not bcm_commands or not bcm_commands.strip():
             return "❌ No BCM commands provided for execution"
 
@@ -1131,12 +1134,7 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
         return "\n".join(lines)
 
     def _filter_placeholders(cmds: list[str]) -> list[str]:
-        forbidden_substrings = [
-            "NODE_NAME",
-            "INTERFACE",
-            "HEAD_NODE",
-            "ROUTE_NAME"
-        ]
+        forbidden_substrings = ["NODE_NAME", "INTERFACE", "HEAD_NODE", "ROUTE_NAME"]
         filtered: list[str] = []
         for c in cmds:
             if any(tok in c for tok in forbidden_substrings):
@@ -1145,26 +1143,51 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
         return filtered
 
     async def _run(input_text: str) -> str:
-        # 1) Assessment first
-        assess = builder.get_function("network_assessment_tool")
-        assess_out = await assess.ainvoke("Run comprehensive network assessment and save results")
+        logger.info("Starting network factory reset orchestrator")
 
-        # 2) Read results summary
+        # 1) Assessment first - only if no recent assessment exists
         reader = builder.get_function("network_results_reader")
-        summary_out = await reader.ainvoke("summary")
+        try:
+            # Check if we have existing assessment data first
+            summary_out = await reader.ainvoke("summary")
+            logger.info("Found existing assessment data, skipping new assessment")
+            assess_out = "✅ Using existing assessment data"
+        except Exception:
+            # No existing data, run new assessment
+            logger.info("No existing assessment found, running new assessment")
+            assess = builder.get_function("network_assessment_tool")
+            assess_out = await assess.ainvoke("Run comprehensive network assessment and save results")
+            summary_out = await reader.ainvoke("summary")
 
-        # 3) Research concrete steps (context-aware)
+        # 2) Truncate summary to prevent context overflow
+        def truncate_summary(summary: str, max_chars: int = 2000) -> str:
+            if len(summary) <= max_chars:
+                return summary
+            lines = summary.split('\n')
+            truncated = ""
+            for line in lines:
+                if len(truncated + line + '\n') > max_chars:
+                    break
+                truncated += line + '\n'
+            return truncated + "\n[...truncated for context size...]"
+
+        summary_truncated = truncate_summary(summary_out)
+        logger.info("Assessment summary truncated to %d characters", len(summary_truncated))
+
+        # 3) Research concrete steps (context-aware but with truncated data)
         net_rag = builder.get_function("networking_expert_rag")
-        research_query = (
-            "DGX SuperPOD networking reset guidance. "
-            "Return concise, actionable steps that lead to exact cmsh commands. "
-            "Use the following context from a fresh assessment summary to ground hostnames and networks.\n\n"
-            f"Assessment Summary:\n{summary_out}\n\n"
-            f"Original request: {input_text}")
+        research_query = ("DGX SuperPOD networking reset guidance. "
+                          "Return concise, actionable steps that lead to exact cmsh commands. "
+                          "Use the following context from assessment to ground hostnames and networks.\n\n"
+                          f"Assessment Summary:\n{summary_truncated}\n\n"
+                          f"Original request: {input_text}")
         research_out = await net_rag.ainvoke(research_query)
 
-        # 4) Generate exact BCM commands
+        # 4) Generate exact BCM commands with minimal context
         bcm_rag = builder.get_function("bcm_documentation_rag")
+        # Extract just key info from research for context
+        research_key_points = research_out[:1000] + "..." if len(research_out) > 1000 else research_out
+
         bcm_query = ("Generate the EXACT Bright Cluster Manager commands (cmsh -c) to revert THIS cluster to a known "
                      "good network state.\n"
                      "STRICT REQUIREMENTS:\n"
@@ -1174,8 +1197,7 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
                      "node and interface names from the context.\n"
                      "- DO NOT use any 'demeter' hostnames or domains.\n"
                      "- Include device/network/category contexts and commit where required.\n\n"
-                     f"Context - Assessment Summary:\n{summary_out}\n\n"
-                     f"Context - Research Guidance:\n{research_out}")
+                     f"Context - Research Guidance:\n{research_key_points}")
         commands_text = await bcm_rag.ainvoke(bcm_query)
         extracted = _extract_cmsh_commands(commands_text)
         cmds_list = [c for c in extracted.splitlines() if c.strip()]
@@ -1183,7 +1205,9 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
 
         # Retry once with stricter instruction if we filtered everything out
         if not cmds_list:
-            stricter_query = bcm_query + "\n\nIf uncertain, default to safe READ-ONLY diagnostic cmsh commands with real hostnames."
+            stricter_query = ("Generate safe BCM diagnostic commands for cluster reset.\n"
+                              "Output format: cmsh -c \"command\"\n"
+                              "If uncertain, default to safe read-ONLY diagnostic cmsh commands.")
             commands_text_2 = await bcm_rag.ainvoke(stricter_query)
             extracted_2 = _extract_cmsh_commands(commands_text_2)
             cmds_list = _filter_placeholders([c for c in extracted_2.splitlines() if c.strip()])
@@ -1197,18 +1221,24 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
         # 6) Optional post validation (read results again)
         post_check = ""
         if config.perform_post_validation:
-            post_check = await reader.ainvoke("summary")
+            try:
+                post_check = await reader.ainvoke("summary")
+                post_check = truncate_summary(post_check, 1000)  # Truncate post-validation too
+            except Exception as e:
+                post_check = f"Post-validation read failed: {str(e)}"
 
         # Assemble final output
         sections = [
             "✅ Network assessment:\n" + assess_out,
-            "📊 Assessment summary:\n" + summary_out,
+            "📊 Assessment summary:\n" + summary_truncated,
             "📚 Research guidance:\n" + research_out,
             "🧰 Generated commands:\n" + commands_only,
             "🚀 Execution result:\n" + exec_out,
         ]
         if post_check:
             sections.append("🔎 Post-execution summary:\n" + post_check)
+
+        logger.info("Network factory reset orchestrator completed")
         return "\n\n".join(sections)
 
     yield FunctionInfo.from_fn(_run, description="Deterministic network factory-reset orchestrator")

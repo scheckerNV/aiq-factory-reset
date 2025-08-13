@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+general:
+  use_uvloop: true
+
+functions:
+  # BCM Documentation RAG Tool with LlamaParse and Multi-Agent Workflow
+  bcm_documentation_rag:
+    _type: aiq_dgx_factory_reset/bcm_documentation_rag
+    max_tokens: 4096  # Reduced from 8192
+    response_mode: "compact"  # Changed from tree_summarize
+    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
+    persist_dir: "examples/factory_reset/storage/bcm_index"
+
+  networking_expert_rag:
+    _type: aiq_dgx_factory_reset/networking_expert_rag
+    max_tokens: 4096  # Reduced from 8192
+    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert"
+    persist_dir: "examples/factory_reset/storage/networking_index"
+
+  network_assessment_tool:
+    _type: aiq_dgx_factory_reset/network_assessment_tool
+    cluster_host: "localhost"
+    cluster_user: "root"
+    timeout: 300
+
+  network_results_reader:
+    _type: aiq_dgx_factory_reset/network_results_reader
+    cluster_host: "localhost"
+    cluster_user: "root"
+    results_directory: "/tmp/cluster_assessment_*"
+
+  hitl_code_approval:
+    _type: aiq_dgx_factory_reset/hitl_code_approval
+    prompt: "🔧 FACTORY RESET EXECUTION - Review these BCM commands that will be executed on schecker-testcluster"
+
+  bcm_executor:
+    _type: aiq_dgx_factory_reset/code_execution_with_approval
+    cluster_host: "localhost"        # if AIQ runs on the cluster head
+    cluster_user: "root"
+    timeout: 600
+    dry_run: true                    # switch to false when ready
+    hitl_approval_fn: hitl_code_approval
+    # coder_llm_name: qwen_coder     # optional, only if you add this LLM in `llms:`
+
+  # Use the FIXED orchestrator with proper loop prevention
+  network_factory_reset_orchestrator:
+    _type: aiq_dgx_factory_reset/network_factory_reset_orchestrator
+    perform_post_validation: false  # Disabled to prevent loops
+
+llms:
+  # Reasoning LLM
+  reasoning_llm:
+    _type: nim
+    model_name: meta/llama-3.1-70b-instruct
+    max_tokens: 4096  # Reduced from 8192
+    temperature: 0.1
+
+  execution_llm:
+    _type: nim
+    model_name: meta/llama-3.1-70b-instruct
+    max_tokens: 4096  # Reduced from 8192
+    temperature: 0.1
+
+workflow:
+  _type: aiq_dgx_factory_reset/network_factory_reset_orchestrator
