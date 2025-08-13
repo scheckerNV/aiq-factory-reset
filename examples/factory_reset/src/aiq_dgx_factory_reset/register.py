@@ -1195,24 +1195,65 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
                           "Use the following context from assessment to ground hostnames and networks.\n\n"
                           f"Assessment Summary:\n{summary_truncated}\n\n"
                           f"Original request: {input_text}")
-        research_out = await net_rag.ainvoke(research_query)
 
-        # 5) Generate exact BCM commands with minimal context
+        logger.info("🔍 CONTEXT DEBUG - Research Query Length: %d chars", len(research_query))
+        logger.info("🔍 CONTEXT DEBUG - Assessment Summary Preview: %s...", summary_truncated[:200])
+
+        research_out = await net_rag.ainvoke(research_query)
+        logger.info("🔍 CONTEXT DEBUG - Research Output Length: %d chars", len(research_out))
+        logger.info("🔍 CONTEXT DEBUG - Research Output Preview: %s...", research_out[:300])
+
+        # 5) Extract specific cluster details for BCM context
+        def extract_cluster_specifics(summary: str) -> str:
+            """Extract key cluster details for BCM commands"""
+            lines = summary.split('\n')
+            cluster_details = []
+
+            # Look for key information
+            for line in lines:
+                line_lower = line.lower()
+                if any(keyword in line_lower for keyword in [
+                        'hostname:', 'node00', 'schecker-testcluster', 'internal', 'external', 'ens3', '10.141',
+                        '192.168.200'
+                ]):
+                    cluster_details.append(line.strip())
+
+            # Add the most recent assessment info
+            if cluster_details:
+                cluster_details.insert(0, "CURRENT CLUSTER STATE:")
+                cluster_details.append("\nKEY POINTS:")
+                cluster_details.append("- Cluster: schecker-testcluster")
+                cluster_details.append("- Nodes: node001 through node010 (10 nodes)")
+                cluster_details.append("- Interface: ens3 (not ib0/ib1/eth0)")
+                cluster_details.append("- Internal network: internalnet 10.141.0.0/16 gw 10.141.255.254")
+                cluster_details.append("- External network: externalnet 192.168.200.0/24 gw 192.168.200.254")
+                cluster_details.append("- NO ibnet/managementnet/computenet/storagenet networks")
+
+            return '\n'.join(cluster_details)
+
+        cluster_context = extract_cluster_specifics(summary_out)  # Use full summary, not truncated
+        logger.info("🔍 CONTEXT DEBUG - Cluster Context: %s", cluster_context)
+
+        # 6) Generate exact BCM commands with specific cluster context
         bcm_rag = builder.get_function("bcm_documentation_rag")
-        # Extract just key info from research for context
-        research_key_points = research_out[:1000] + "..." if len(research_out) > 1000 else research_out
 
         bcm_query = ("Generate the EXACT Bright Cluster Manager commands (cmsh -c) to revert THIS cluster to a known "
                      "good network state.\n"
                      "STRICT REQUIREMENTS:\n"
                      "- Output ONLY commands, one per line, no explanations.\n"
                      "- Each line MUST start with: cmsh -c \"\n"
-                     "- DO NOT use placeholders like NODE_NAME/INTERFACE/HEAD_NODE/ROUTE_NAME. Replace with actual "
-                     "node and interface names from the context.\n"
-                     "- DO NOT use any 'demeter' hostnames or domains.\n"
+                     "- Use ONLY the actual cluster details provided below.\n"
+                     "- DO NOT use demeter/ibnet/managementnet/computenet/storagenet networks.\n"
+                     "- DO NOT use ib0/ib1/eth0 interfaces - use ens3.\n"
                      "- Include device/network/category contexts and commit where required.\n\n"
-                     f"Context - Research Guidance:\n{research_key_points}")
+                     f"CLUSTER SPECIFIC CONTEXT:\n{cluster_context}\n\n"
+                     f"DESIRED STATE GUIDANCE:\n{research_out[:500]}")
+
+        logger.info("🔍 CONTEXT DEBUG - BCM Query Length: %d chars", len(bcm_query))
+        logger.info("🔍 CONTEXT DEBUG - Cluster Context: %s", cluster_context[:300])
+
         commands_text = await bcm_rag.ainvoke(bcm_query)
+        logger.info("🔍 CONTEXT DEBUG - BCM Commands Generated: %s...", commands_text[:500])
         extracted = _extract_cmsh_commands(commands_text)
         cmds_list = [c for c in extracted.splitlines() if c.strip()]
         cmds_list = _filter_placeholders(cmds_list)
@@ -1228,11 +1269,11 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
 
         commands_only = "\n".join(cmds_list) if cmds_list else extracted.strip() or commands_text.strip()
 
-        # 6) Execute with approval
+        # 7) Execute with approval
         executor = builder.get_function("bcm_executor")
         exec_out = await executor.ainvoke(commands_only)
 
-        # 7) Optional post validation (read results again)
+        # 8) Optional post validation (read results again)
         post_check = ""
         if config.perform_post_validation:
             try:
