@@ -1,27 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Debug configuration with enhanced logging and live execution
-
 general:
   use_uvloop: true
 
 functions:
-  # BCM Documentation RAG Tool with DEBUG settings
   bcm_documentation_rag:
     _type: aiq_dgx_factory_reset/bcm_documentation_rag
-    max_tokens: 4096
-    response_mode: "compact"  # More efficient than tree_summarize
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
     persist_dir: "examples/factory_reset/storage/bcm_index"
-    similarity_top_k: 3  # Reduced for better focus
 
   dgx_expert_rag:
     _type: aiq_dgx_factory_reset/dgx_expert_rag
-    max_tokens: 4096
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/dgx_expert"
     persist_dir: "examples/factory_reset/storage/dgx_index"
-    similarity_top_k: 3  # Reduced for better focus
 
   node_assessment_tool:
     _type: aiq_dgx_factory_reset/node_assessment_tool
@@ -37,28 +29,107 @@ functions:
 
   hitl_code_approval:
     _type: aiq_dgx_factory_reset/hitl_code_approval
-    prompt: "🔧 DEBUG EXECUTION - Review these DGX BCM commands for schecker-testcluster (LIVE EXECUTION ENABLED)"
+    prompt: "Review the following BCM commands for DGX reset (approve yes/no)"
 
   bcm_executor:
     _type: aiq_dgx_factory_reset/code_execution_with_approval
     cluster_host: "localhost"
     cluster_user: "root"
     timeout: 600
-    dry_run: false
+    dry_run: true
     hitl_approval_fn: hitl_code_approval
 
-llms:
-  reasoning_llm:
-    _type: nim
-    model_name: meta/llama-3.1-70b-instruct
-    max_tokens: 4096
-    temperature: 0.1
+  dgx_react_agent:
+    _type: react_agent
+    tool_names:
+      - dgx_expert_rag
+      - bcm_documentation_rag
+      - node_assessment_tool
+      - node_results_reader 
+      - hitl_code_approval
+      - bcm_executor
+    llm_name: execution_llm
+    verbose: true
+    parse_agent_response_max_retries: 3
+    retry_agent_response_parsing_errors: true
 
-  execution_llm:
-    _type: nim
-    model_name: meta/llama-3.1-70b-instruct
-    max_tokens: 4096
-    temperature: 0.1
+  dgx_factory_reset_orchestrator:
+    _type: aiq_dgx_factory_reset/dgx_factory_reset_orchestrator
+    reasoning_llm_name: reasoning_llm
+    react_agent_fn: dgx_react_agent
+    executor_fn: bcm_executor
 
 workflow:
-  _type: aiq_dgx_factory_reset/network_factory_reset_orchestrator
+  _type: reasoning_agent
+  llm_name: reasoning_llm
+  augmented_fn: dgx_factory_reset_orchestrator   # use DGX orchestrator
+  verbose: true
+  reasoning_prompt_template: |
+    <think>
+    I need to analyze this request for a DGX SuperPOD factory reset operation.
+
+    Let me break down what I need to understand:
+
+    1. CONTEXT ANALYSIS:
+       - What type of DGX analysis or operation is being requested?
+       - Is this a complete factory reset, partial reset, or analysis?
+       - What components of the SuperPOD infrastructure are involved?
+       - Are there any specific DGX nodes or network segments mentioned?
+
+    2. INFORMATION REQUIREMENTS:
+       - What documentation do I need to reference?
+       - What current node state information is needed?
+       - What are the dependencies and prerequisites?
+       - What safety considerations are important?
+
+    3. EXECUTION PLANNING:
+       - What is the correct sequence of operations?
+       - Which nodes need to be reset first?
+       - How do I verify current state before making changes?
+       - What validation steps are needed after each operation?
+       - What are the rollback procedures if something goes wrong?
+
+    4. RISK ASSESSMENT:
+       - What are the potential impacts of changes?
+       - How do I minimize downtime?
+       - What could go wrong and how to prevent it?
+       - Are there any dependencies on external systems?
+
+    5. OUTPUT PLANNING:
+       - What specific information should I gather?
+       - What format should the response be in?
+       - Should I provide step-by-step procedures or analysis?
+       - What level of detail is appropriate?
+
+    Based on this analysis, I need to create a comprehensive plan for the dgx expert to execute.
+    </think>
+
+    You are analyzing a request for DGX SuperPOD factory reset operations.
+
+    Create a detailed execution plan that considers:
+    - Network and node infrastructure components involved
+    - Required documentation and configuration references
+    - Step-by-step operational sequence
+    - Safety considerations and validation steps
+    - Dependencies and prerequisites
+
+    Provide a clear, actionable plan for the DGX expert to follow.
+
+  instruction_prompt_template: |
+    Based on the analysis above, execute this SuperPOD operation plan:
+
+    REASONING ANALYSIS:
+    {reasoning_output}
+
+    ORIGINAL REQUEST: {input_text}
+
+    EXECUTION INSTRUCTIONS:
+    Using your DGX SuperPOD expertise and available tools, systematically execute the planned approach.
+
+    1. First, gather all necessary information about current cluster state
+    2. Reference relevant documentation for proper procedures
+    3. Provide specific, actionable recommendations or analysis
+    4. Include proper safety warnings and validation steps
+    5. Ensure operations are sequenced correctly
+
+    Focus on providing comprehensive, accurate guidance that follows best practices for DGX SuperPOD environments.
