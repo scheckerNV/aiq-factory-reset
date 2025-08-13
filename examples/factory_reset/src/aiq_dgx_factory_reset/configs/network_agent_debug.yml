@@ -44,7 +44,7 @@ functions:
     cluster_host: "localhost"
     cluster_user: "root"
     timeout: 600
-    dry_run: false  
+    dry_run: false
     hitl_approval_fn: hitl_code_approval
 
   # NEW: Network config extractor
@@ -70,4 +70,4 @@ llms:
     temperature: 0.1
 
 workflow:
-  _type: aiq_dgx_factory_reset/simple_network_orchestrator
+  _type: aiq_dgx_factory_reset/network_factory_reset_orchestrator
