@@ -907,6 +907,64 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
 print("✅ Network Config Extractor tool registered successfully")
 
 # ========================
+# Simple Network Factory Reset Orchestrator
+# ========================
+
+
+class SimpleNetworkOrchestratorConfig(FunctionBaseConfig, name="simple_network_orchestrator"):
+    """Simple orchestrator that just calls tools in sequence"""
+    pass
+
+
+@register_function(config_type=SimpleNetworkOrchestratorConfig)
+async def simple_network_orchestrator(config: SimpleNetworkOrchestratorConfig, builder: Builder):
+    """Simple orchestrator - just calls tools in sequence without embedded logic"""
+
+    async def _simple_run(input_text: str) -> str:
+        logger.info("🚀 Simple Network Factory Reset Orchestrator")
+
+        # Step 1: Run network assessment
+        logger.info("Step 1: Running network assessment")
+        assess_tool = builder.get_function("network_assessment_tool")
+        assess_result = await assess_tool.ainvoke("Run comprehensive network assessment")
+        logger.info("✅ Assessment completed")
+
+        # Step 2: Read full assessment data (let the reader handle all the complexity)
+        logger.info("Step 2: Reading assessment data")
+        reader_tool = builder.get_function("network_results_reader")
+        current_state = await reader_tool.ainvoke("full")
+        logger.info("✅ Current state loaded (%d chars)", len(current_state))
+
+        # Step 3: Extract desired config from YAML (let the extractor handle the parsing)
+        logger.info("Step 3: Extracting target configuration")
+        config_tool = builder.get_function("network_config_extractor")
+        desired_state = await config_tool.ainvoke("extract config")
+        logger.info("✅ Target config loaded")
+
+        # Step 4: Generate BCM commands
+        logger.info("Step 4: Generating BCM commands")
+        bcm_tool = builder.get_function("bcm_documentation_rag")
+        context = f"CURRENT STATE:\n{current_state[:800]}\n\nTARGET CONFIG:\n{desired_state}"
+        bcm_query = ("Generate EXACT cmsh commands to configure this cluster.\n"
+                     "Requirements: Output only commands, one per line, use physical interfaces.\n\n"
+                     f"CONTEXT:\n{context}")
+        commands = await bcm_tool.ainvoke(bcm_query)
+        logger.info("✅ Commands generated")
+
+        # Step 5: Execute with approval
+        logger.info("Step 5: Executing commands with approval")
+        exec_tool = builder.get_function("code_execution_with_approval")
+        result = await exec_tool.ainvoke(commands)
+        logger.info("✅ Execution completed")
+
+        return result
+
+    yield FunctionInfo.from_fn(_simple_run, description="Simple network factory reset orchestrator")
+
+
+print("✅ Simple Network Orchestrator registered successfully")
+
+# ========================
 # LangGraph Orchestrator
 # ========================
 
