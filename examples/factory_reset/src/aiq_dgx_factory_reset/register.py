@@ -732,23 +732,42 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
 
             results = []
 
-            for file_pattern in files_to_read:
-                ssh_cmd = [
-                    "ssh",
-                    f"{config.cluster_user}@{config.cluster_host}",
-                    f"find {config.results_directory} -name '{file_pattern}' -exec cat {{}} \\;"
-                ]
+            # First, find the LATEST assessment directory
+            latest_dir_cmd = [
+                "ssh",
+                f"{config.cluster_user}@{config.cluster_host}",
+                f"ls -td {config.results_directory} 2>/dev/null | head -1"
+            ]
 
-                process = await asyncio.create_subprocess_exec(*ssh_cmd,
-                                                               stdout=asyncio.subprocess.PIPE,
-                                                               stderr=asyncio.subprocess.PIPE)
+            latest_process = await asyncio.create_subprocess_exec(*latest_dir_cmd,
+                                                                  stdout=asyncio.subprocess.PIPE,
+                                                                  stderr=asyncio.subprocess.PIPE)
 
-                stdout, stderr = await process.communicate()
+            latest_stdout, latest_stderr = await latest_process.communicate()
 
-                if process.returncode == 0:
-                    content = stdout.decode('utf-8')
-                    if content.strip():
-                        results.append(f"📄 {file_pattern}:\n{content}\n{'='*50}\n")
+            if latest_process.returncode == 0 and latest_stdout.strip():
+                latest_dir = latest_stdout.decode('utf-8').strip()
+                logger.info(f"Reading from latest assessment directory: {latest_dir}")
+
+                for file_pattern in files_to_read:
+                    ssh_cmd = [
+                        "ssh",
+                        f"{config.cluster_user}@{config.cluster_host}",
+                        f"find {latest_dir} -name '{file_pattern}' -exec cat {{}} \\;"
+                    ]
+
+                    process = await asyncio.create_subprocess_exec(*ssh_cmd,
+                                                                   stdout=asyncio.subprocess.PIPE,
+                                                                   stderr=asyncio.subprocess.PIPE)
+
+                    stdout, stderr = await process.communicate()
+
+                    if process.returncode == 0:
+                        content = stdout.decode('utf-8')
+                        if content.strip():
+                            results.append(f"📄 {file_pattern}:\n{content}\n{'='*50}\n")
+            else:
+                logger.error(f"Could not find latest assessment directory matching {config.results_directory}")
 
             if results:
                 return f"""📊 Network Assessment Results:
