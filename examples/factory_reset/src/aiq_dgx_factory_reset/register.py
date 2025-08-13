@@ -854,9 +854,12 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
                     name = fabric_config.get('name', fabric_name)
                     subnet = fabric_config.get('subnet')
                     gateway = fabric_config.get('gateway')
+                    interface = fabric_config.get('interface')
                     fabric_type = fabric_config.get('fabric_type', 'ethernet')
                     if subnet:
-                        facts.append(f"NETWORK: {name} uses {subnet} gateway {gateway} type {fabric_type}")
+                        interface_str = f" interface {interface}" if interface else ""
+                        facts.append(
+                            f"NETWORK: {name} uses {subnet} gateway {gateway} type {fabric_type}{interface_str}")
 
             elif 'networks' in config_data:
                 # Schecker format: networks.internal.subnet
@@ -972,165 +975,162 @@ async def simple_network_orchestrator(config: SimpleNetworkOrchestratorConfig, b
 print("✅ Simple Network Orchestrator registered successfully")
 
 # ========================
-# LangGraph Orchestrator
+# LangGraph Orchestrator - implement later
 # ========================
 
+# class NetworkWorkflowOrchestratorConfig(FunctionBaseConfig, name="network_workflow_orchestrator"):
+#     max_retries: int = Field(default=1, description="Maximum retry attempts")  # Reduced from 3 to 1
+#     quality_threshold: float = Field(default=0.3, description="Minimum quality score for commands")  # Lowered threshold
 
-class NetworkWorkflowOrchestratorConfig(FunctionBaseConfig, name="network_workflow_orchestrator"):
-    max_retries: int = Field(default=1, description="Maximum retry attempts")  # Reduced from 3 to 1
-    quality_threshold: float = Field(default=0.3, description="Minimum quality score for commands")  # Lowered threshold
+# @register_function(config_type=NetworkWorkflowOrchestratorConfig)
+# async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfig, builder: Builder):
+#     """LangGraph orchestrator that uses your existing tools"""
 
+#     import re
+#     from typing import TypedDict
 
-@register_function(config_type=NetworkWorkflowOrchestratorConfig)
-async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfig, builder: Builder):
-    """LangGraph orchestrator that uses your existing tools"""
+#     from langgraph.graph import END
+#     from langgraph.graph import StateGraph
 
-    import re
-    from typing import TypedDict
+#     def extract_user_input(inp: str | dict) -> str:
+#         """Extract raw user question from Reasoning Agent plan or pass-through dict."""
+#         if isinstance(inp, dict):
+#             if "input_text" in inp:
+#                 return str(inp["input_text"]).strip()
+#             for v in inp.values():
+#                 if isinstance(v, str) and v.strip():
+#                     return v.strip()
+#             return str(inp)
+#         if isinstance(inp, str):
+#             m = re.search(r'ORIGINAL REQUEST:\s*\{.*?"content":\s*"([^"]+)"', inp, re.S)
+#             return m.group(1).strip() if m else inp.strip()
+#         return str(inp).strip()
 
-    from langgraph.graph import END
-    from langgraph.graph import StateGraph
+#     # NOTE:
+#     # Do NOT fetch tools at build time. The AIQ builder may construct this
+#     # function before its dependencies, causing lookup failures.
+#     # Instead, fetch tool handles lazily inside each node when executed.
 
-    def extract_user_input(inp: str | dict) -> str:
-        """Extract raw user question from Reasoning Agent plan or pass-through dict."""
-        if isinstance(inp, dict):
-            if "input_text" in inp:
-                return str(inp["input_text"]).strip()
-            for v in inp.values():
-                if isinstance(v, str) and v.strip():
-                    return v.strip()
-            return str(inp)
-        if isinstance(inp, str):
-            m = re.search(r'ORIGINAL REQUEST:\s*\{.*?"content":\s*"([^"]+)"', inp, re.S)
-            return m.group(1).strip() if m else inp.strip()
-        return str(inp).strip()
+#     class WorkflowState(TypedDict):
+#         input: str
+#         assessment_complete: bool
+#         commands_generated: bool
+#         quality_score: float
+#         retry_count: int
+#         final_output: str
 
-    # NOTE:
-    # Do NOT fetch tools at build time. The AIQ builder may construct this
-    # function before its dependencies, causing lookup failures.
-    # Instead, fetch tool handles lazily inside each node when executed.
+#     async def assessment_node(state: WorkflowState):
+#         """Use your existing assessment tool"""
+#         logger.info("LangGraph: running assessment_node")
+#         assessment_tool = builder.get_function("network_assessment_tool")
+#         task = extract_user_input(state["input"])
+#         result = await assessment_tool.ainvoke(task)
+#         return {**state, "assessment_complete": True, "assessment_data": result}
 
-    class WorkflowState(TypedDict):
-        input: str
-        assessment_complete: bool
-        commands_generated: bool
-        quality_score: float
-        retry_count: int
-        final_output: str
+#     async def analysis_node(state: WorkflowState):
+#         """Use your existing results reader"""
+#         results_reader = builder.get_function("network_results_reader")
+#         # Trigger a summary read of latest assessment results; input string is not used meaningfully
+#         result = await results_reader.ainvoke("")
+#         return {**state, "analysis_complete": True, "analysis_data": result}
 
-    async def assessment_node(state: WorkflowState):
-        """Use your existing assessment tool"""
-        logger.info("LangGraph: running assessment_node")
-        assessment_tool = builder.get_function("network_assessment_tool")
-        task = extract_user_input(state["input"])
-        result = await assessment_tool.ainvoke(task)
-        return {**state, "assessment_complete": True, "assessment_data": result}
+#     async def research_node(state: WorkflowState):
+#         """Use your existing networking expert tool"""
+#         # Ask for concrete, actionable guidance tailored to producing cmsh commands
+#         task = extract_user_input(state["input"])
+#         query = ("DGX SuperPOD networking reset. "
+#                  f"Task: {task}. "
+#                  "Return concise, actionable steps that directly lead to BCM cmsh commands. "
+#                  "Avoid high-level prose.")
+#         networking_rag_tool = builder.get_function("networking_expert_rag")
+#         result = await networking_rag_tool.ainvoke(query)
+#         return {**state, "research_complete": True, "research_data": result}
 
-    async def analysis_node(state: WorkflowState):
-        """Use your existing results reader"""
-        results_reader = builder.get_function("network_results_reader")
-        # Trigger a summary read of latest assessment results; input string is not used meaningfully
-        result = await results_reader.ainvoke("")
-        return {**state, "analysis_complete": True, "analysis_data": result}
+#     async def command_generation_node(state: WorkflowState):
+#         """Use your existing BCM RAG tool"""
+#         bcm_rag_tool = builder.get_function("bcm_documentation_rag")
+#         task = extract_user_input(state["input"])
+#         context = ("Assessment Summary:\n" + (state.get('assessment_data', '') or '').strip() + "\n\n" +
+#                    "Analysis Summary:\n" + (state.get('analysis_data', '') or '').strip() + "\n\n" +
+#                    "Research Summary:\n" + (state.get('research_data', '') or '').strip() + "\n\n" + "Instruction:\n" +
+#                    f"Generate the EXACT Bright Cluster Manager commands, using cmsh -c, for task: {task}.\n" +
+#                    "Revert the cluster networking to a known good state.\n" + "Requirements:\n" +
+#                    "- Output ONLY commands, one per line, no explanations.\n" +
+#                    "- Each line MUST start with: cmsh -c \"\n" +
+#                    "- Include necessary device/network/category contexts and commit where required.\n")
+#         result = await bcm_rag_tool.ainvoke(context)
 
-    async def research_node(state: WorkflowState):
-        """Use your existing networking expert tool"""
-        # Ask for concrete, actionable guidance tailored to producing cmsh commands
-        task = extract_user_input(state["input"])
-        query = ("DGX SuperPOD networking reset. "
-                 f"Task: {task}. "
-                 "Return concise, actionable steps that directly lead to BCM cmsh commands. "
-                 "Avoid high-level prose.")
-        networking_rag_tool = builder.get_function("networking_expert_rag")
-        result = await networking_rag_tool.ainvoke(query)
-        return {**state, "research_complete": True, "research_data": result}
+#         # Improved quality: count lines that start with exact cmsh command prefix
+#         cmsh_lines = []
+#         for line in result.splitlines():
+#             stripped = line.strip()
+#             if stripped.startswith('cmsh -c "'):
+#                 cmsh_lines.append(stripped)
+#         quality = min(1.0, len(cmsh_lines) / 5.0)
 
-    async def command_generation_node(state: WorkflowState):
-        """Use your existing BCM RAG tool"""
-        bcm_rag_tool = builder.get_function("bcm_documentation_rag")
-        task = extract_user_input(state["input"])
-        context = ("Assessment Summary:\n" + (state.get('assessment_data', '') or '').strip() + "\n\n" +
-                   "Analysis Summary:\n" + (state.get('analysis_data', '') or '').strip() + "\n\n" +
-                   "Research Summary:\n" + (state.get('research_data', '') or '').strip() + "\n\n" + "Instruction:\n" +
-                   f"Generate the EXACT Bright Cluster Manager commands, using cmsh -c, for task: {task}.\n" +
-                   "Revert the cluster networking to a known good state.\n" + "Requirements:\n" +
-                   "- Output ONLY commands, one per line, no explanations.\n" +
-                   "- Each line MUST start with: cmsh -c \"\n" +
-                   "- Include necessary device/network/category contexts and commit where required.\n")
-        result = await bcm_rag_tool.ainvoke(context)
+#         return {
+#             **state,
+#             "commands_generated": True,
+#             "commands": result,
+#             "quality_score": quality,
+#             "retry_count": state.get("retry_count", 0) + 1
+#         }
 
-        # Improved quality: count lines that start with exact cmsh command prefix
-        cmsh_lines = []
-        for line in result.splitlines():
-            stripped = line.strip()
-            if stripped.startswith('cmsh -c "'):
-                cmsh_lines.append(stripped)
-        quality = min(1.0, len(cmsh_lines) / 5.0)
+#     def should_retry(state: WorkflowState):
+#         """Conditional logic: retry if quality is low"""
+#         if (state["quality_score"] < config.quality_threshold and state["retry_count"] < config.max_retries):
+#             return "generate_commands"  # Fixed: was "retry_commands"
+#         return "finalize"
 
-        return {
-            **state,
-            "commands_generated": True,
-            "commands": result,
-            "quality_score": quality,
-            "retry_count": state.get("retry_count", 0) + 1
-        }
+#     async def finalize_node(state: WorkflowState):
+#         return {**state, "final_output": state.get("commands", "No commands generated")}
 
-    def should_retry(state: WorkflowState):
-        """Conditional logic: retry if quality is low"""
-        if (state["quality_score"] < config.quality_threshold and state["retry_count"] < config.max_retries):
-            return "generate_commands"  # Fixed: was "retry_commands"
-        return "finalize"
+#     # Build the LangGraph workflow
+#     workflow = StateGraph(WorkflowState)
 
-    async def finalize_node(state: WorkflowState):
-        return {**state, "final_output": state.get("commands", "No commands generated")}
+#     # Add nodes (using your existing tools)
+#     workflow.add_node("assess", assessment_node)
+#     workflow.add_node("analyze", analysis_node)
+#     workflow.add_node("research", research_node)
+#     workflow.add_node("generate_commands", command_generation_node)
+#     workflow.add_node("finalize", finalize_node)
 
-    # Build the LangGraph workflow
-    workflow = StateGraph(WorkflowState)
+#     # Define the flow
+#     workflow.set_entry_point("assess")
+#     workflow.add_edge("assess", "analyze")
+#     workflow.add_edge("analyze", "research")
+#     workflow.add_edge("research", "generate_commands")
 
-    # Add nodes (using your existing tools)
-    workflow.add_node("assess", assessment_node)
-    workflow.add_node("analyze", analysis_node)
-    workflow.add_node("research", research_node)
-    workflow.add_node("generate_commands", command_generation_node)
-    workflow.add_node("finalize", finalize_node)
+#     # Conditional edge with retry loop
+#     workflow.add_conditional_edges(
+#         "generate_commands",
+#         should_retry,
+#         {
+#             "generate_commands": "generate_commands",  # Loop back - Fixed mapping
+#             "finalize": "finalize"  # Exit
+#         })
 
-    # Define the flow
-    workflow.set_entry_point("assess")
-    workflow.add_edge("assess", "analyze")
-    workflow.add_edge("analyze", "research")
-    workflow.add_edge("research", "generate_commands")
+#     workflow.add_edge("finalize", END)
 
-    # Conditional edge with retry loop
-    workflow.add_conditional_edges(
-        "generate_commands",
-        should_retry,
-        {
-            "generate_commands": "generate_commands",  # Loop back - Fixed mapping
-            "finalize": "finalize"  # Exit
-        })
+#     app = workflow.compile()
 
-    workflow.add_edge("finalize", END)
+#     async def _orchestrated_workflow(input_text: str) -> str:
+#         """Execute the LangGraph workflow using your existing tools"""
+#         initial_state: WorkflowState = {
+#             "input": input_text,
+#             "assessment_complete": False,
+#             "commands_generated": False,
+#             "quality_score": 0.0,
+#             "retry_count": 0,
+#             "final_output": ""
+#         }
+#         result = await app.ainvoke(initial_state)
+#         return result.get("final_output", "Workflow failed")
 
-    app = workflow.compile()
+#     yield FunctionInfo.from_fn(_orchestrated_workflow,
+#                                description="LangGraph orchestrator using existing network tools")
 
-    async def _orchestrated_workflow(input_text: str) -> str:
-        """Execute the LangGraph workflow using your existing tools"""
-        initial_state: WorkflowState = {
-            "input": input_text,
-            "assessment_complete": False,
-            "commands_generated": False,
-            "quality_score": 0.0,
-            "retry_count": 0,
-            "final_output": ""
-        }
-        result = await app.ainvoke(initial_state)
-        return result.get("final_output", "Workflow failed")
-
-    yield FunctionInfo.from_fn(_orchestrated_workflow,
-                               description="LangGraph orchestrator using existing network tools")
-
-
-print("✅ LangGraph Network Workflow Orchestrator registered successfully")
+# print("✅ LangGraph Network Workflow Orchestrator registered successfully")
 
 # ========================
 # Human-in-the-Loop (HITL) Approval and BCM Command Executor
