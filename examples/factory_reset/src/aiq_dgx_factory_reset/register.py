@@ -5,10 +5,12 @@ This module provides accurate retrieval of BCM (Bright Cluster Manager) document
 using LlamaIndex, LlamaParse, and NVIDIA embeddings for high-quality RAG responses.
 """
 
+import glob
 import logging
 import os
 from pathlib import Path
 
+import yaml
 from pydantic import Field
 
 from aiq.builder.builder import Builder
@@ -727,6 +729,15 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                 files_to_read = ["10_switch_*", "11_switch_*", "12_switch_*"]
             elif "network" in query.lower():
                 files_to_read = ["03_networks.txt", "04_interfaces.txt"]
+            elif "full" in query.lower() or "all" in query.lower():
+                # Return combined assessment data for orchestrator
+                files_to_read = [
+                    "00_SUMMARY.txt",
+                    "03_networks.txt",
+                    "02_device_list.txt",
+                    "04_interfaces.txt",
+                    "05_connectivity.txt"
+                ]
             else:
                 files_to_read = ["00_SUMMARY.txt"]
 
@@ -789,6 +800,111 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
 
 
 print("✅ Networking Expert Network Reader tool registered successfully")
+
+# ========================
+# Network Config YAML Extractor
+# ========================
+
+
+class NetworkConfigExtractorConfig(FunctionBaseConfig, name="network_config_extractor"):
+    networking_docs_path: str = Field(default="examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert",
+                                      description="Path to networking expert documentation directory")
+
+
+@register_function(config_type=NetworkConfigExtractorConfig)
+async def network_config_extractor(config: NetworkConfigExtractorConfig, _builder: Builder):
+    """Extract network configuration directly from YAML config files"""
+
+    async def _extract_network_config_from_yaml(networking_docs_path: str) -> str:
+        """Extract network configuration directly from YAML config file"""
+        try:
+            # Find the config file
+            config_files = glob.glob(f"{networking_docs_path}/*_config.yaml")
+            if not config_files:
+                return "No network config YAML found in docs/networking_expert/"
+
+            config_file = config_files[0]  # Use first found
+            logger.info(f"📋 Reading network config from: {config_file}")
+
+            with open(config_file, 'r') as f:
+                config_data = yaml.safe_load(f)
+
+            facts = []
+            cluster_name = "unknown"
+
+            # Extract cluster name
+            if 'metadata' in config_data and 'cluster_name' in config_data['metadata']:
+                cluster_name = config_data['metadata']['cluster_name']
+            elif 'cluster' in config_data and 'name' in config_data['cluster']:
+                cluster_name = config_data['cluster']['name']
+
+            facts.append(f"CLUSTER: {cluster_name}")
+
+            # Parse network fabrics (handles both schecker and demeter formats)
+            if 'network_fabrics' in config_data:
+                # Demeter format: network_fabrics.management.subnet
+                for fabric_name, fabric_config in config_data['network_fabrics'].items():
+                    name = fabric_config.get('name', fabric_name)
+                    subnet = fabric_config.get('subnet')
+                    gateway = fabric_config.get('gateway')
+                    fabric_type = fabric_config.get('fabric_type', 'ethernet')
+                    if subnet:
+                        facts.append(f"NETWORK: {name} uses {subnet} gateway {gateway} type {fabric_type}")
+
+            elif 'networks' in config_data:
+                # Schecker format: networks.internal.subnet
+                for net_name, net_config in config_data['networks'].items():
+                    name = net_config.get('name')
+                    subnet = net_config.get('subnet')
+                    gateway = net_config.get('gateway')
+                    interface = net_config.get('interface')
+                    if subnet and name:
+                        interface_str = f" interface {interface}" if interface else ""
+                        facts.append(f"NETWORK: {name} uses {subnet} gateway {gateway}{interface_str}")
+
+            # Parse node definitions for head node and sample workers
+            if 'nodes' in config_data:
+                # Extract head node and first few worker nodes
+                node_count = 0
+                for node_name, node_config in config_data['nodes'].items():
+                    if node_count >= 5:  # Limit to first 5 nodes
+                        break
+                    if 'networks' in node_config:
+                        for net_type, net_info in node_config['networks'].items():
+                            if isinstance(net_info, dict) and 'ip' in net_info:
+                                facts.append(f"NODE: {node_name} on {net_type} = {net_info['ip']}")
+                    elif 'hostname' in node_config:
+                        # Handle simpler node format
+                        hostname = node_config['hostname']
+                        facts.append(f"NODE: {hostname}")
+                    node_count += 1
+
+            # Parse infrastructure nodes if present
+            if 'infrastructure' in config_data:
+                infra = config_data['infrastructure']
+                if 'management_nodes' in infra:
+                    for node_name, node_config in infra['management_nodes'].items():
+                        if 'ip' in node_config:
+                            facts.append(f"MGMT_NODE: {node_name} = {node_config['ip']}")
+
+            # If no detailed network info was found, try to extract from other sections
+            if len([f for f in facts if f.startswith('NETWORK:')]) == 0:
+                facts.append("WARNING: No network configuration found in YAML")
+
+            result = '\n'.join(facts)
+            logger.info(f"📋 Extracted {len(facts)} configuration facts from YAML")
+            return result
+
+        except Exception as e:
+            error_msg = f"❌ Error reading YAML config: {str(e)}"
+            logger.error(error_msg)
+            return error_msg
+
+    yield FunctionInfo.from_fn(_extract_network_config_from_yaml,
+                               description="Extract network configuration from YAML files")
+
+
+print("✅ Network Config Extractor tool registered successfully")
 
 # ========================
 # LangGraph Orchestrator
@@ -1141,7 +1257,7 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
         lines = []
         for raw in text.splitlines():
             s = raw.strip()
-            if s.startswith('cmsh -c "') or s.startswith("cmsh -c '"):
+            if s.startswith('cmsh -c "') or s.startswith("cmsh -c '") or s.startswith('cmsh '):
                 # remove trailing semicolons if present
                 lines.append(s.rstrip(';'))
         if lines:
@@ -1181,7 +1297,8 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
             connectivity_details = await reader.ainvoke("connectivity")
 
             # Combine all data for better context
-            full_assessment_data = f"{summary_out}\n\nNETWORK DETAILS:\n{network_details}\n\nDEVICE DETAILS:\n{device_details}\n\nCONNECTIVITY:\n{connectivity_details}"
+            full_assessment_data = (f"{summary_out}\n\nNETWORK DETAILS:\n{network_details}\n\n"
+                                    f"DEVICE DETAILS:\n{device_details}\n\nCONNECTIVITY:\n{connectivity_details}")
             logger.info("🔍 Full assessment data length: %d chars", len(full_assessment_data))
 
             # Debug: Show a sample of what we found
@@ -1194,126 +1311,57 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
             logger.warning("🔍 Could not read detailed assessment data: %s", str(e))
             full_assessment_data = summary_out
 
-        # 3) Truncate summary to prevent context overflow
-        def truncate_summary(summary: str, max_chars: int = 2000) -> str:
-            if len(summary) <= max_chars:
-                return summary
-            lines = summary.split('\n')
-            truncated = ""
-            for line in lines:
-                if len(truncated + line + '\n') > max_chars:
-                    break
-                truncated += line + '\n'
-            return truncated + "\n[...truncated for context size...]"
+        # 3) Truncate summary for context management
+        max_summary_chars = 1500
+        if len(summary_out) > max_summary_chars:
+            summary_truncated = summary_out[:max_summary_chars] + "\n[...truncated...]"
+        else:
+            summary_truncated = summary_out
+        logger.info("Assessment summary: %d characters", len(summary_truncated))
 
-        summary_truncated = truncate_summary(summary_out)
-        logger.info("Assessment summary truncated to %d characters", len(summary_truncated))
+        # 4) Skip lengthy research step for now - we have YAML config
+        logger.info("🚀 Skipping research step - using direct YAML configuration")
+        research_out = "Using direct YAML configuration for cluster setup"
 
-        # 4) Research concrete steps (context-aware but with truncated data)
-        net_rag = builder.get_function("networking_expert_rag")
-        research_query = ("DGX SuperPOD networking reset guidance. "
-                          "Return concise, actionable steps that lead to exact cmsh commands. "
-                          "Use the following context from assessment to ground hostnames and networks.\n\n"
-                          f"Assessment Summary:\n{summary_truncated}\n\n"
-                          f"Original request: {input_text}")
-
-        logger.info("🔍 CONTEXT DEBUG - Research Query Length: %d chars", len(research_query))
-        logger.info("🔍 CONTEXT DEBUG - Assessment Summary Preview: %s...", summary_truncated[:200])
-
-        research_out = await net_rag.ainvoke(research_query)
-        logger.info("🔍 CONTEXT DEBUG - Research Output Length: %d chars", len(research_out))
-        logger.info("🔍 CONTEXT DEBUG - Research Output Preview: %s...", research_out[:300])
-
-        # 5) Extract specific cluster details for BCM context
-        def extract_cluster_specifics(assessment_data: str) -> str:
-            """Extract key cluster details for BCM commands"""
+        # 5) Extract current cluster context from assessment data (simplified)
+        def extract_current_context(assessment_data: str) -> str:
+            """Extract current network state from assessment data"""
             lines = assessment_data.split('\n')
-            cluster_details = []
+            current_facts = []
 
-            # Look for key information in the full assessment
+            # Look for key current state information (generic patterns)
             for line in lines:
                 line_lower = line.lower()
-                if any(keyword in line_lower for keyword in [
-                        'hostname:', 'node', 'internal', 'external', 'ens', 'device_type', 'interface', 'network', 'ip',
-                        'gateway'
-                ]):
-                    cluster_details.append(line.strip())
+                if any(keyword in line_lower
+                       for keyword in ['node0', 'testcluster', 'net', 'dgx-', 'management', 'compute', 'storage']):
+                    if any(info in line_lower for info in ['ip', 'hostname', 'interface', 'network']):
+                        current_facts.append(line.strip())
 
-            # Only use what we actually found in the assessment data
-            if not cluster_details:
-                cluster_details.append("No specific cluster details found in assessment data")
+            return '\n'.join(current_facts[:10])  # Limit to first 10 relevant lines
 
-            return '\n'.join(cluster_details)
+        current_context = extract_current_context(full_assessment_data)
+        logger.info("🔍 CURRENT CONTEXT: %s", current_context[:300])
 
-        cluster_context = extract_cluster_specifics(full_assessment_data)  # Use full assessment data
-        logger.info("🔍 CONTEXT DEBUG - Cluster Context: %s", cluster_context)
+        # 6) Extract desired state configuration from YAML using our new tool
+        config_extractor = builder.get_function("network_config_extractor")
+        desired_state_config = await config_extractor.ainvoke("extract network configuration")
+        logger.info("🔍 DESIRED STATE CONFIG from YAML: %s", desired_state_config)
 
-        # 6) Generate exact BCM commands with specific cluster context
+        # 7) Combine current and desired state for BCM context
+        combined_context = (f"CURRENT STATE (from assessment):\n{current_context[:500]}\n\n"
+                            f"DESIRED STATE (from YAML):\n{desired_state_config}")
+        logger.info("🔍 COMBINED CONTEXT LENGTH: %d chars", len(combined_context))
+        # 8) Generate BCM commands using combined context
         bcm_rag = builder.get_function("bcm_documentation_rag")
-
-        # Also include the desired state configuration from networking expert docs
-        networking_rag = builder.get_function("networking_expert_rag")
-        desired_state_query = f"Extract the exact network configuration from the YAML configuration file. Include node names, IP addresses, interface names, and network names."
-        desired_state_config = await networking_rag.ainvoke(desired_state_query)
-        logger.info("🔍 DESIRED STATE CONFIG: %s...", desired_state_config[:300])
-
-        # Extract just the essential facts to avoid context overflow
-        def extract_essential_facts(current_state: str, desired_state: str) -> str:
-            """Extract only the essential facts for BCM commands - DYNAMICALLY from data"""
-            facts = []
-
-            # Extract current network names from assessment data
-            current_networks = []
-            for line in current_state.split('\n'):
-                if 'net' in line.lower() and any(word in line for word in ['External', 'Internal']):
-                    parts = line.split()
-                    if parts:
-                        current_networks.append(parts[0])
-
-            if current_networks:
-                facts.append(f"Current networks: {', '.join(current_networks[:3])}")
-
-            # Extract network configurations from desired state DYNAMICALLY
-            for line in desired_state.split('\n'):
-                line = line.strip()
-                # Look for subnet patterns like "x.x.x.x/yy"
-                if '/' in line and ('subnet' in line.lower() or 'network' in line.lower()):
-                    if 'internal' in line.lower():
-                        facts.append(f"Target internal network: {line}")
-                    elif 'external' in line.lower():
-                        facts.append(f"Target external network: {line}")
-                # Look for gateway patterns
-                elif 'gateway' in line.lower():
-                    facts.append(f"Gateway: {line}")
-                # Look for interface patterns
-                elif 'interface' in line.lower() or 'ens' in line:
-                    facts.append(f"Interface: {line}")
-
-            # Extract sample nodes from current state
-            nodes = []
-            for line in current_state.split('\n'):
-                if 'node' in line.lower() and ':' in line and len(nodes) < 3:
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        nodes.append(f"{parts[0]}:{parts[1]}")
-
-            if nodes:
-                facts.append(f"Sample nodes: {', '.join(nodes)}")
-
-            return '\n'.join(facts)
-
-        essential_facts = extract_essential_facts(cluster_context, desired_state_config)
-        logger.info("🔍 ESSENTIAL FACTS EXTRACTED: %s", essential_facts)
-
         bcm_query = ("Generate EXACT Bright Cluster Manager commands (cmsh -c) to configure this cluster.\n"
                      "REQUIREMENTS:\n"
                      "- Output ONLY commands, one per line, no explanations\n"
                      "- Each line MUST start with: cmsh -c \"\n"
-                     "- Use cluster details below\n\n"
-                     f"CLUSTER DETAILS:\n{essential_facts}")
+                     "- Use physical interfaces (not vlan or alias)\n"
+                     "- Match network names and IP ranges from the config\n\n"
+                     f"CLUSTER CONFIGURATION:\n{combined_context}")
 
         logger.info("🔍 CONTEXT DEBUG - BCM Query Length: %d chars", len(bcm_query))
-        logger.info("🔍 CONTEXT DEBUG - Cluster Context: %s", cluster_context[:300])
 
         commands_text = await bcm_rag.ainvoke(bcm_query)
         logger.info("🔍 CONTEXT DEBUG - BCM Commands Generated: %s...", commands_text[:500])
@@ -1341,7 +1389,7 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
         if config.perform_post_validation:
             try:
                 post_check = await reader.ainvoke("summary")
-                post_check = truncate_summary(post_check, 1000)  # Truncate post-validation too
+                post_check = post_check[:1000] if len(post_check) > 1000 else post_check  # Truncate post-validation too
             except Exception as e:
                 post_check = f"Post-validation read failed: {str(e)}"
 
