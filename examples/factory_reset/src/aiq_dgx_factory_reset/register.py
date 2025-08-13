@@ -1253,7 +1253,7 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
 
         # Also include the desired state configuration from networking expert docs
         networking_rag = builder.get_function("networking_expert_rag")
-        desired_state_query = f"Extract the exact network configuration for schecker-testcluster from the YAML configuration file. Include node names, IP addresses, interface names, and network names."
+        desired_state_query = f"Extract the exact network configuration from the YAML configuration file. Include node names, IP addresses, interface names, and network names."
         desired_state_config = await networking_rag.ainvoke(desired_state_query)
         logger.info("🔍 DESIRED STATE CONFIG: %s...", desired_state_config[:300])
 
@@ -1276,7 +1276,7 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
             # Extract network configurations from desired state DYNAMICALLY
             for line in desired_state.split('\n'):
                 line = line.strip()
-                # Look for subnet patterns like "10.141.0.0/16" or "192.168.200.0/24"
+                # Look for subnet patterns like "x.x.x.x/yy"
                 if '/' in line and ('subnet' in line.lower() or 'network' in line.lower()):
                     if 'internal' in line.lower():
                         facts.append(f"Target internal network: {line}")
