@@ -616,7 +616,7 @@ class NetworkAssessmentToolConfig(FunctionBaseConfig, name="network_assessment_t
 async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder: Builder):
     """Comprehensive network assessment tool for BCM clusters"""
 
-    async def _run_network_assessment(_input_message: str) -> str:
+    async def _run_network_assessment(input_message: str) -> str:
         """Execute comprehensive network assessment"""
         import asyncio
         import tempfile
@@ -1145,21 +1145,16 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
     async def _run(input_text: str) -> str:
         logger.info("Starting network factory reset orchestrator")
 
-        # 1) Assessment first - only if no recent assessment exists
-        reader = builder.get_function("network_results_reader")
-        try:
-            # Check if we have existing assessment data first
-            summary_out = await reader.ainvoke("summary")
-            logger.info("Found existing assessment data, skipping new assessment")
-            assess_out = "✅ Using existing assessment data"
-        except Exception:
-            # No existing data, run new assessment
-            logger.info("No existing assessment found, running new assessment")
-            assess = builder.get_function("network_assessment_tool")
-            assess_out = await assess.ainvoke("Run comprehensive network assessment and save results")
-            summary_out = await reader.ainvoke("summary")
+        # 1) Assessment first - always run fresh assessment
+        logger.info("Running fresh network assessment")
+        assess = builder.get_function("network_assessment_tool")
+        assess_out = await assess.ainvoke("Run comprehensive network assessment and save results")
 
-        # 2) Truncate summary to prevent context overflow
+        # 2) Read results summary
+        reader = builder.get_function("network_results_reader")
+        summary_out = await reader.ainvoke("summary")
+
+        # 3) Truncate summary to prevent context overflow
         def truncate_summary(summary: str, max_chars: int = 2000) -> str:
             if len(summary) <= max_chars:
                 return summary
@@ -1174,7 +1169,7 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
         summary_truncated = truncate_summary(summary_out)
         logger.info("Assessment summary truncated to %d characters", len(summary_truncated))
 
-        # 3) Research concrete steps (context-aware but with truncated data)
+        # 4) Research concrete steps (context-aware but with truncated data)
         net_rag = builder.get_function("networking_expert_rag")
         research_query = ("DGX SuperPOD networking reset guidance. "
                           "Return concise, actionable steps that lead to exact cmsh commands. "
@@ -1183,7 +1178,7 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
                           f"Original request: {input_text}")
         research_out = await net_rag.ainvoke(research_query)
 
-        # 4) Generate exact BCM commands with minimal context
+        # 5) Generate exact BCM commands with minimal context
         bcm_rag = builder.get_function("bcm_documentation_rag")
         # Extract just key info from research for context
         research_key_points = research_out[:1000] + "..." if len(research_out) > 1000 else research_out
@@ -1214,11 +1209,11 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
 
         commands_only = "\n".join(cmds_list) if cmds_list else extracted.strip() or commands_text.strip()
 
-        # 5) Execute with approval
+        # 6) Execute with approval
         executor = builder.get_function("bcm_executor")
         exec_out = await executor.ainvoke(commands_only)
 
-        # 6) Optional post validation (read results again)
+        # 7) Optional post validation (read results again)
         post_check = ""
         if config.perform_post_validation:
             try:
