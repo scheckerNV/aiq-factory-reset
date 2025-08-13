@@ -366,6 +366,93 @@ cmsh -c "device commit"
 
 # Interface types: physical, vlan, bond, bridge, bmc, alias, tunnel
 ```
+### Modern Ethernet Configuration
+
+#### Standard Internal/External Network Setup
+
+```shell
+# 1. Configure internalnet (cluster management network)
+cmsh -c "network use internalnet; set baseaddress INTERNAL_BASE_IP"
+cmsh -c "network use internalnet; set netmaskbits INTERNAL_NETMASK_BITS"
+cmsh -c "network use internalnet; set gateway INTERNAL_GATEWAY_IP"
+cmsh -c "network use internalnet; set type internal"
+cmsh -c "network use internalnet; commit"
+
+# 2. Configure externalnet (external connectivity)
+cmsh -c "network use externalnet; set baseaddress EXTERNAL_BASE_IP"
+cmsh -c "network use externalnet; set netmaskbits EXTERNAL_NETMASK_BITS"
+cmsh -c "network use externalnet; set gateway EXTERNAL_GATEWAY_IP"
+cmsh -c "network use externalnet; set type external"
+cmsh -c "network use externalnet; commit"
+```
+
+#### Modern Linux Interface Configuration (ens3, enp0s3, etc.)
+
+```shell
+# Head node - dual network configuration
+cmsh -c "device use HEAD_NODE; interfaces; add physical ens3"
+cmsh -c "device use HEAD_NODE; interfaces use ens3; set network internalnet"
+cmsh -c "device use HEAD_NODE; interfaces use ens3; set ip INTERNAL_HEAD_IP; commit"
+
+# Worker nodes - internal network only
+cmsh -c "device use NODE_NAME; interfaces; add physical ens3"
+cmsh -c "device use NODE_NAME; interfaces use ens3; set network internalnet"
+cmsh -c "device use NODE_NAME; interfaces use ens3; set ip INTERNAL_NODE_IP; commit"
+
+# Alternative modern interface names
+cmsh -c "device use NODE_NAME; interfaces; add physical enp0s3"   # PCI-based naming
+cmsh -c "device use NODE_NAME; interfaces; add physical enp1s0"   # Multi-port cards
+cmsh -c "device use NODE_NAME; interfaces; add physical eno1"     # Onboard interfaces
+```
+
+#### Mass Configuration for Modern Interfaces
+
+```shell
+# Configure all nodes with ens3 interfaces on internal network
+cmsh -c "device addinterface -n node001..node100 physical ens3 internalnet FIRST_INTERNAL_IP"
+cmsh -c "device commit"
+
+# Configure head node additional external interface
+cmsh -c "device use HEAD_NODE; interfaces; add physical ens4"
+cmsh -c "device use HEAD_NODE; interfaces use ens4; set network externalnet"
+cmsh -c "device use HEAD_NODE; interfaces use ens4; set ip EXTERNAL_HEAD_IP; commit"
+```
+
+#### Network Type Best Practices
+
+```shell
+# Internal network - typically RFC 1918 private ranges
+# Common patterns: 10.x.x.x/16, 172.16-31.x.x/16, 192.168.x.x/24
+cmsh -c "network use internalnet; set baseaddress 10.141.0.0"
+cmsh -c "network use internalnet; set netmaskbits 16"
+cmsh -c "network use internalnet; set gateway 10.141.255.254"
+
+# External network - organization-specific ranges
+# Examples: campus networks, datacenter networks
+cmsh -c "network use externalnet; set baseaddress 192.168.200.0"
+cmsh -c "network use externalnet; set netmaskbits 24"
+cmsh -c "network use externalnet; set gateway 192.168.200.254"
+```
+
+#### Interface Troubleshooting
+
+```shell
+# List all interfaces on a device
+cmsh -c "device use NODE_NAME; interfaces; list"
+
+# Check interface configuration
+cmsh -c "device use NODE_NAME; interfaces use INTERFACE_NAME; show"
+
+# Remove and re-add interface
+cmsh -c "device use NODE_NAME; interfaces; remove INTERFACE_NAME"
+cmsh -c "device use NODE_NAME; interfaces; add physical INTERFACE_NAME"
+cmsh -c "device use NODE_NAME; interfaces use INTERFACE_NAME; set network NETWORK_NAME"
+cmsh -c "device use NODE_NAME; interfaces use INTERFACE_NAME; set ip IP_ADDRESS; commit"
+```
+
+```
+
+---
 
 ### VLAN Configuration
 
