@@ -79,6 +79,16 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             # Configure LlamaIndex with NVIDIA models for accuracy
             Settings.llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
             Settings.embed_model = NVIDIAEmbedding(model="nvidia/llama-3.2-nv-embedqa-1b-v2", truncate="END")
+            # Enable debug/tracing so reasoning signals are visible in logs (optional)
+            try:
+                from llama_index.core.callbacks import CallbackManager
+                from llama_index.core.callbacks import LlamaDebugHandler
+                from llama_index.core.callbacks import TokenCountingHandler
+                Settings.callback_manager = CallbackManager(
+                    [LlamaDebugHandler(print_trace_on_end=True), TokenCountingHandler()])
+            except Exception:
+                # Debug handlers are optional; ignore if unavailable
+                pass
 
             logger.info("Processing BCM documentation from %s", docs_path)
 
@@ -171,6 +181,21 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                     score = getattr(node, 'score', 'N/A')
                     result += f"{i}. {source} (relevance: {score:.3f})\n"
                 result += "\n"
+                # Show brief context snippets to reveal what informed the answer
+                result += "**Top retrieved context (snippets):**\n"
+                for i, node in enumerate(response.source_nodes[:3], 1):
+                    source = node.metadata.get('file_name', 'Unknown')
+                    text = getattr(node, 'text', '') or getattr(node, 'node', getattr(node, 'document', None))
+                    snippet = ''
+                    if isinstance(text, str):
+                        snippet = text.strip().replace("\n", " ")[:500]
+                    elif hasattr(node, 'get_text'):
+                        try:
+                            snippet = node.get_text().strip().replace("\n", " ")[:500]
+                        except Exception:
+                            snippet = ''
+                    if snippet:
+                        result += f"{i}. {source}: {snippet}…\n"
 
             result += "📋 **Source:** BCM Administration Manual\n\n"
             result += "⚠️  **Note:** Please verify commands in your specific BCM environment before execution."
@@ -244,6 +269,15 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
             # Configure LlamaIndex with NVIDIA models for accuracy
             Settings.llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
             Settings.embed_model = NVIDIAEmbedding(model="nvidia/llama-3.2-nv-embedqa-1b-v2", truncate="END")
+            # Enable debug/tracing so reasoning signals are visible in logs (optional)
+            try:
+                from llama_index.core.callbacks import CallbackManager
+                from llama_index.core.callbacks import LlamaDebugHandler
+                from llama_index.core.callbacks import TokenCountingHandler
+                Settings.callback_manager = CallbackManager(
+                    [LlamaDebugHandler(print_trace_on_end=True), TokenCountingHandler()])
+            except Exception:
+                pass
 
             logger.info("Processing documentation from %s", docs_path)
 
@@ -392,6 +426,22 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
                 for i, node in enumerate(response.source_nodes[:3], 1):
                     file_name = node.metadata.get('file_name', 'Unknown')
                     result += f"{i}. {file_name} (Score: {node.score:.3f})\n"
+                result += "\n"
+                # Show brief context snippets to reveal what informed the answer
+                result += "**Top retrieved context (snippets):**\n"
+                for i, node in enumerate(response.source_nodes[:3], 1):
+                    source = node.metadata.get('file_name', 'Unknown')
+                    text = getattr(node, 'text', '') or getattr(node, 'node', getattr(node, 'document', None))
+                    snippet = ''
+                    if isinstance(text, str):
+                        snippet = text.strip().replace("\n", " ")[:500]
+                    elif hasattr(node, 'get_text'):
+                        try:
+                            snippet = node.get_text().strip().replace("\n", " ")[:500]
+                        except Exception:
+                            snippet = ''
+                    if snippet:
+                        result += f"{i}. {source}: {snippet}…\n"
 
             return result
 
@@ -469,6 +519,15 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
             # Configure LlamaIndex with NVIDIA models for accuracy
             Settings.llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
             Settings.embed_model = NVIDIAEmbedding(model="nvidia/llama-3.2-nv-embedqa-1b-v2", truncate="END")
+            # Enable debug/tracing so reasoning signals are visible in logs (optional)
+            try:
+                from llama_index.core.callbacks import CallbackManager
+                from llama_index.core.callbacks import LlamaDebugHandler
+                from llama_index.core.callbacks import TokenCountingHandler
+                Settings.callback_manager = CallbackManager(
+                    [LlamaDebugHandler(print_trace_on_end=True), TokenCountingHandler()])
+            except Exception:
+                pass
 
             logger.info("Processing Networking documentation from %s", docs_path)
 
@@ -588,6 +647,21 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
                     score = getattr(node, 'score', 'N/A')
                     result += f"{i}. {source} (relevance: {score:.3f})\n"
                 result += "\n"
+                # Show brief context snippets to reveal what informed the answer
+                result += "**Top retrieved context (snippets):**\n"
+                for i, node in enumerate(response.source_nodes[:3], 1):
+                    source = node.metadata.get('file_name', 'Unknown')
+                    text = getattr(node, 'text', '') or getattr(node, 'node', getattr(node, 'document', None))
+                    snippet = ''
+                    if isinstance(text, str):
+                        snippet = text.strip().replace("\n", " ")[:500]
+                    elif hasattr(node, 'get_text'):
+                        try:
+                            snippet = node.get_text().strip().replace("\n", " ")[:500]
+                        except Exception:
+                            snippet = ''
+                    if snippet:
+                        result += f"{i}. {source}: {snippet}…\n"
 
             result += "⚠️  **Note:** Please verify commands in your specific Cluster environment before execution."
 
