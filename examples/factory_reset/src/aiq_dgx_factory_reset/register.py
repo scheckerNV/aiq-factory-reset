@@ -1234,8 +1234,8 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
             for line in lines:
                 line_lower = line.lower()
                 if any(keyword in line_lower for keyword in [
-                        'hostname:', 'node00', 'schecker-testcluster', 'internal', 'external', 'ens3', '10.141',
-                        '192.168.200', 'device_type', 'interface', 'network', 'ip', 'gateway'
+                        'hostname:', 'node', 'internal', 'external', 'ens', 'device_type', 'interface', 'network', 'ip',
+                        'gateway'
                 ]):
                     cluster_details.append(line.strip())
 
@@ -1259,25 +1259,40 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
 
         # Extract just the essential facts to avoid context overflow
         def extract_essential_facts(current_state: str, desired_state: str) -> str:
-            """Extract only the essential facts for BCM commands"""
+            """Extract only the essential facts for BCM commands - DYNAMICALLY from data"""
             facts = []
 
-            # Extract current network names from assessment
-            if "externalnet" in current_state:
-                facts.append("Current networks: externalnet, internalnet")
+            # Extract current network names from assessment data
+            current_networks = []
+            for line in current_state.split('\n'):
+                if 'net' in line.lower() and any(word in line for word in ['External', 'Internal']):
+                    parts = line.split()
+                    if parts:
+                        current_networks.append(parts[0])
 
-            # Extract desired config essentials
-            if "internalnet" in desired_state and "10.141" in desired_state:
-                facts.append("Target: internalnet 10.141.0.0/16 gateway 10.141.255.254")
-            if "externalnet" in desired_state and "192.168.200" in desired_state:
-                facts.append("Target: externalnet 192.168.200.0/24 gateway 192.168.200.254")
-            if "ens3" in desired_state:
-                facts.append("Interface: ens3")
+            if current_networks:
+                facts.append(f"Current networks: {', '.join(current_networks[:3])}")
 
-            # Extract key nodes from current state (first few lines with node info)
+            # Extract network configurations from desired state DYNAMICALLY
+            for line in desired_state.split('\n'):
+                line = line.strip()
+                # Look for subnet patterns like "10.141.0.0/16" or "192.168.200.0/24"
+                if '/' in line and ('subnet' in line.lower() or 'network' in line.lower()):
+                    if 'internal' in line.lower():
+                        facts.append(f"Target internal network: {line}")
+                    elif 'external' in line.lower():
+                        facts.append(f"Target external network: {line}")
+                # Look for gateway patterns
+                elif 'gateway' in line.lower():
+                    facts.append(f"Gateway: {line}")
+                # Look for interface patterns
+                elif 'interface' in line.lower() or 'ens' in line:
+                    facts.append(f"Interface: {line}")
+
+            # Extract sample nodes from current state
             nodes = []
             for line in current_state.split('\n'):
-                if 'node0' in line and '10.141.0.' in line and len(nodes) < 3:
+                if 'node' in line.lower() and ':' in line and len(nodes) < 3:
                     parts = line.split()
                     if len(parts) >= 2:
                         nodes.append(f"{parts[0]}:{parts[1]}")
