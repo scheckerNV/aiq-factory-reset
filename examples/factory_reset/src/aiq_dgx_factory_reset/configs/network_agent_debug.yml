@@ -44,13 +44,17 @@ functions:
     cluster_host: "localhost"
     cluster_user: "root"
     timeout: 600
-    dry_run: false  # 🚨 LIVE EXECUTION ENABLED 🚨
+    dry_run: false  
     hitl_approval_fn: hitl_code_approval
 
-  # Debug orchestrator with enhanced logging
-  network_factory_reset_orchestrator:
-    _type: aiq_dgx_factory_reset/network_factory_reset_orchestrator
-    perform_post_validation: true
+  # NEW: Network config extractor
+  network_config_extractor:
+    _type: aiq_dgx_factory_reset/network_config_extractor
+    networking_docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert"
+
+  # Simple orchestrator without embedded logic
+  simple_network_orchestrator:
+    _type: aiq_dgx_factory_reset/simple_network_orchestrator
 
 llms:
   reasoning_llm:
@@ -66,4 +70,4 @@ llms:
     temperature: 0.1
 
 workflow:
-  _type: aiq_dgx_factory_reset/network_factory_reset_orchestrator
+  _type: aiq_dgx_factory_reset/simple_network_orchestrator
