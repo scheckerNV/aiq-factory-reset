@@ -815,23 +815,22 @@ class NetworkConfigExtractorConfig(FunctionBaseConfig, name="network_config_extr
 async def network_config_extractor(config: NetworkConfigExtractorConfig, _builder: Builder):
     """Extract network configuration directly from YAML config files"""
 
-    async def _extract_network_config_from_yaml(networking_docs_path: str) -> str:
+    async def _extract_network_config_from_yaml(query: str) -> str:
         """Extract network configuration directly from YAML config file"""
         try:
-            # Find the config file
-            logger.info(f"🔍 Looking for config files in: {networking_docs_path}")
-            config_files = glob.glob(f"{networking_docs_path}/*_config.yaml")
-            logger.info(f"🔍 Found config files: {config_files}")
-            if not config_files:
-                # Try absolute path resolution
-                abs_path = os.path.abspath(networking_docs_path)
-                logger.info(f"🔍 Trying absolute path: {abs_path}")
-                config_files = glob.glob(f"{abs_path}/*_config.yaml")
-                logger.info(f"🔍 Found with absolute path: {config_files}")
-                if not config_files:
-                    return f"No network config YAML found in {networking_docs_path}/ or {abs_path}/"
+            # Use the config path, not the input parameter
+            networking_docs_path = config.networking_docs_path
 
-            config_file = config_files[0]  # Use first found
+            # If it's already an absolute path to a file, use it directly
+            if networking_docs_path.endswith('.yaml') and os.path.isfile(networking_docs_path):
+                config_file = networking_docs_path
+            else:
+                # Otherwise, look for config files in the directory
+                config_files = glob.glob(os.path.join(networking_docs_path, "*_config.yaml"))
+                if not config_files:
+                    return f"No network config YAML found in {networking_docs_path}/"
+                config_file = config_files[0]
+
             logger.info(f"📋 Reading network config from: {config_file}")
 
             with open(config_file, 'r') as f:
