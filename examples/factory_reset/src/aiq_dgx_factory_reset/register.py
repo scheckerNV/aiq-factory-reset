@@ -1169,9 +1169,30 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
         assess = builder.get_function("network_assessment_tool")
         assess_out = await assess.ainvoke("Run comprehensive network assessment and save results")
 
-        # 2) Read results summary
+        # 2) Read detailed results (not just summary)
         reader = builder.get_function("network_results_reader")
         summary_out = await reader.ainvoke("summary")
+
+        # Also get detailed network and device info
+        logger.info("🔍 Reading detailed network and device information...")
+        try:
+            network_details = await reader.ainvoke("network")
+            device_details = await reader.ainvoke("device")
+            connectivity_details = await reader.ainvoke("connectivity")
+
+            # Combine all data for better context
+            full_assessment_data = f"{summary_out}\n\nNETWORK DETAILS:\n{network_details}\n\nDEVICE DETAILS:\n{device_details}\n\nCONNECTIVITY:\n{connectivity_details}"
+            logger.info("🔍 Full assessment data length: %d chars", len(full_assessment_data))
+
+            # Debug: Show a sample of what we found
+            logger.info("🔍 NETWORK DETAILS PREVIEW: %s...",
+                        network_details[:300] if network_details else "No network details")
+            logger.info("🔍 DEVICE DETAILS PREVIEW: %s...",
+                        device_details[:300] if device_details else "No device details")
+
+        except Exception as e:
+            logger.warning("🔍 Could not read detailed assessment data: %s", str(e))
+            full_assessment_data = summary_out
 
         # 3) Truncate summary to prevent context overflow
         def truncate_summary(summary: str, max_chars: int = 2000) -> str:
@@ -1204,50 +1225,49 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
         logger.info("🔍 CONTEXT DEBUG - Research Output Preview: %s...", research_out[:300])
 
         # 5) Extract specific cluster details for BCM context
-        def extract_cluster_specifics(summary: str) -> str:
+        def extract_cluster_specifics(assessment_data: str) -> str:
             """Extract key cluster details for BCM commands"""
-            lines = summary.split('\n')
+            lines = assessment_data.split('\n')
             cluster_details = []
 
-            # Look for key information
+            # Look for key information in the full assessment
             for line in lines:
                 line_lower = line.lower()
                 if any(keyword in line_lower for keyword in [
                         'hostname:', 'node00', 'schecker-testcluster', 'internal', 'external', 'ens3', '10.141',
-                        '192.168.200'
+                        '192.168.200', 'device_type', 'interface', 'network', 'ip', 'gateway'
                 ]):
                     cluster_details.append(line.strip())
 
-            # Add the most recent assessment info
-            if cluster_details:
-                cluster_details.insert(0, "CURRENT CLUSTER STATE:")
-                cluster_details.append("\nKEY POINTS:")
-                cluster_details.append("- Cluster: schecker-testcluster")
-                cluster_details.append("- Nodes: node001 through node010 (10 nodes)")
-                cluster_details.append("- Interface: ens3 (not ib0/ib1/eth0)")
-                cluster_details.append("- Internal network: internalnet 10.141.0.0/16 gw 10.141.255.254")
-                cluster_details.append("- External network: externalnet 192.168.200.0/24 gw 192.168.200.254")
-                cluster_details.append("- NO ibnet/managementnet/computenet/storagenet networks")
+            # Only use what we actually found in the assessment data
+            if not cluster_details:
+                cluster_details.append("No specific cluster details found in assessment data")
 
             return '\n'.join(cluster_details)
 
-        cluster_context = extract_cluster_specifics(summary_out)  # Use full summary, not truncated
+        cluster_context = extract_cluster_specifics(full_assessment_data)  # Use full assessment data
         logger.info("🔍 CONTEXT DEBUG - Cluster Context: %s", cluster_context)
 
         # 6) Generate exact BCM commands with specific cluster context
         bcm_rag = builder.get_function("bcm_documentation_rag")
 
-        bcm_query = ("Generate the EXACT Bright Cluster Manager commands (cmsh -c) to revert THIS cluster to a known "
-                     "good network state.\n"
+        # Also include the desired state configuration from networking expert docs
+        networking_rag = builder.get_function("networking_expert_rag")
+        desired_state_query = f"Extract the exact network configuration for schecker-testcluster from the YAML configuration file. Include node names, IP addresses, interface names, and network names."
+        desired_state_config = await networking_rag.ainvoke(desired_state_query)
+        logger.info("🔍 DESIRED STATE CONFIG: %s...", desired_state_config[:300])
+
+        bcm_query = ("Generate the EXACT Bright Cluster Manager commands (cmsh -c) to configure this cluster "
+                     "according to the desired state.\n"
                      "STRICT REQUIREMENTS:\n"
                      "- Output ONLY commands, one per line, no explanations.\n"
                      "- Each line MUST start with: cmsh -c \"\n"
                      "- Use ONLY the actual cluster details provided below.\n"
-                     "- DO NOT use demeter/ibnet/managementnet/computenet/storagenet networks.\n"
-                     "- DO NOT use ib0/ib1/eth0 interfaces - use ens3.\n"
+                     "- Match the desired state configuration exactly.\n"
                      "- Include device/network/category contexts and commit where required.\n\n"
-                     f"CLUSTER SPECIFIC CONTEXT:\n{cluster_context}\n\n"
-                     f"DESIRED STATE GUIDANCE:\n{research_out[:500]}")
+                     f"CURRENT CLUSTER STATE:\n{cluster_context}\n\n"
+                     f"DESIRED STATE CONFIGURATION:\n{desired_state_config}\n\n"
+                     f"GUIDANCE:\n{research_out[:300]}")
 
         logger.info("🔍 CONTEXT DEBUG - BCM Query Length: %d chars", len(bcm_query))
         logger.info("🔍 CONTEXT DEBUG - Cluster Context: %s", cluster_context[:300])
