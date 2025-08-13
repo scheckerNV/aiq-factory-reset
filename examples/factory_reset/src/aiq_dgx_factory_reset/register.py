@@ -1257,17 +1257,45 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
         desired_state_config = await networking_rag.ainvoke(desired_state_query)
         logger.info("🔍 DESIRED STATE CONFIG: %s...", desired_state_config[:300])
 
-        bcm_query = ("Generate the EXACT Bright Cluster Manager commands (cmsh -c) to configure this cluster "
-                     "according to the desired state.\n"
-                     "STRICT REQUIREMENTS:\n"
-                     "- Output ONLY commands, one per line, no explanations.\n"
+        # Extract just the essential facts to avoid context overflow
+        def extract_essential_facts(current_state: str, desired_state: str) -> str:
+            """Extract only the essential facts for BCM commands"""
+            facts = []
+
+            # Extract current network names from assessment
+            if "externalnet" in current_state:
+                facts.append("Current networks: externalnet, internalnet")
+
+            # Extract desired config essentials
+            if "internalnet" in desired_state and "10.141" in desired_state:
+                facts.append("Target: internalnet 10.141.0.0/16 gateway 10.141.255.254")
+            if "externalnet" in desired_state and "192.168.200" in desired_state:
+                facts.append("Target: externalnet 192.168.200.0/24 gateway 192.168.200.254")
+            if "ens3" in desired_state:
+                facts.append("Interface: ens3")
+
+            # Extract key nodes from current state (first few lines with node info)
+            nodes = []
+            for line in current_state.split('\n'):
+                if 'node0' in line and '10.141.0.' in line and len(nodes) < 3:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        nodes.append(f"{parts[0]}:{parts[1]}")
+
+            if nodes:
+                facts.append(f"Sample nodes: {', '.join(nodes)}")
+
+            return '\n'.join(facts)
+
+        essential_facts = extract_essential_facts(cluster_context, desired_state_config)
+        logger.info("🔍 ESSENTIAL FACTS EXTRACTED: %s", essential_facts)
+
+        bcm_query = ("Generate EXACT Bright Cluster Manager commands (cmsh -c) to configure this cluster.\n"
+                     "REQUIREMENTS:\n"
+                     "- Output ONLY commands, one per line, no explanations\n"
                      "- Each line MUST start with: cmsh -c \"\n"
-                     "- Use ONLY the actual cluster details provided below.\n"
-                     "- Match the desired state configuration exactly.\n"
-                     "- Include device/network/category contexts and commit where required.\n\n"
-                     f"CURRENT CLUSTER STATE:\n{cluster_context}\n\n"
-                     f"DESIRED STATE CONFIGURATION:\n{desired_state_config}\n\n"
-                     f"GUIDANCE:\n{research_out[:300]}")
+                     "- Use cluster details below\n\n"
+                     f"CLUSTER DETAILS:\n{essential_facts}")
 
         logger.info("🔍 CONTEXT DEBUG - BCM Query Length: %d chars", len(bcm_query))
         logger.info("🔍 CONTEXT DEBUG - Cluster Context: %s", cluster_context[:300])
