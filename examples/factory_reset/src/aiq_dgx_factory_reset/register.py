@@ -1029,8 +1029,11 @@ async def simple_network_orchestrator(config: SimpleNetworkOrchestratorConfig, b
         logger.info("Step 4: Generating BCM commands")
         bcm_tool = builder.get_function("bcm_documentation_rag")
         context = f"CURRENT STATE:\n{current_state[:800]}\n\nTARGET CONFIG:\n{desired_state}"
-        bcm_query = ("Generate EXACT cmsh commands to configure this cluster.\n"
-                     "Requirements: Output only commands, one per line, use physical interfaces.\n\n"
+        bcm_query = ("You are a BCM expert. Use the context to plan then generate commands.\n"
+                     "Return two sections in this exact order:\n"
+                     "Rationale: 3-5 concise bullets citing config/doc snippets used.\n"
+                     "Commands: each line MUST start with cmsh -c \" and be one command per line.\n\n"
+                     "Requirements for commands: use physical interfaces, match network names and IP ranges.\n\n"
                      f"CONTEXT:\n{context}")
         commands = await bcm_tool.ainvoke(bcm_query)
         logger.info("✅ Commands generated")
@@ -1492,13 +1495,13 @@ async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestr
         logger.info("🔍 COMBINED CONTEXT LENGTH: %d chars", len(combined_context))
         # 8) Generate BCM commands using combined context
         bcm_rag = builder.get_function("bcm_documentation_rag")
-        bcm_query = ("Generate EXACT Bright Cluster Manager commands (cmsh -c) to configure this cluster.\n"
-                     "REQUIREMENTS:\n"
-                     "- Output ONLY commands, one per line, no explanations\n"
-                     "- Each line MUST start with: cmsh -c \"\n"
-                     "- Use physical interfaces (not vlan or alias)\n"
-                     "- Match network names and IP ranges from the config\n\n"
-                     f"CLUSTER CONFIGURATION:\n{combined_context}")
+        bcm_query = (
+            "You are a BCM expert. Read the configuration and plan before writing commands.\n"
+            "Output two sections in this exact order:\n"
+            "Rationale: 3-5 concise bullets referencing specific lines from CONTEXT (by quoting short snippets).\n"
+            "Commands: each line MUST start with cmsh -c \" and be one command per line.\n\n"
+            "Command requirements: use physical interfaces (no VLAN/alias), match network names and IP ranges.\n\n"
+            f"CONTEXT:\n{combined_context}")
 
         logger.info("🔍 CONTEXT DEBUG - BCM Query Length: %d chars", len(bcm_query))
 
