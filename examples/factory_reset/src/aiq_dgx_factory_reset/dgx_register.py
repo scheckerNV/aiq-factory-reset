@@ -142,7 +142,7 @@ class NodeAssessmentToolConfig(FunctionBaseConfig, name="node_assessment_tool"):
 @register_function(config_type=NodeAssessmentToolConfig)
 async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Builder):
 
-    async def _run_node_assessment(_input_text: str) -> str:
+    async def _run_node_assessment(input_text: str) -> str:
         """Upload and execute the dedicated node_assessment.sh script; return results dir."""
         try:
             script_path_on_disk = os.path.join(
@@ -155,14 +155,22 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
 
             # Local run
             if config.cluster_host == "localhost":
+                # Ensure script is executable and run via bash to avoid exec perms issues
+                try:
+                    os.chmod(script_path_on_disk, 0o755)
+                except Exception:
+                    pass
                 proc = await asyncio.create_subprocess_exec(
+                    "/bin/bash",
                     script_path_on_disk,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
                 if proc.returncode != 0:
-                    return f"❌ Local assessment failed: {stderr.decode('utf-8')}"
+                    # Include stdout as well since some tools write errors to stdout
+                    return ("❌ Local assessment failed:\n" + (stderr.decode('utf-8') or '').strip() + "\n" +
+                            (stdout.decode('utf-8') or '').strip())
                 outdir = stdout.decode("utf-8").strip().splitlines()[-1]
                 return f"✅ Node assessment complete. Results in: {outdir}"
 
@@ -189,7 +197,8 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                                                         stderr=asyncio.subprocess.PIPE)
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
             if proc.returncode != 0:
-                return f"❌ Remote assessment failed: {stderr.decode('utf-8')}"
+                return ("❌ Remote assessment failed:\n" + (stderr.decode('utf-8') or '').strip() + "\n" +
+                        (stdout.decode('utf-8') or '').strip())
             outdir = stdout.decode("utf-8").strip().splitlines()[-1]
             return ("✅ Node assessment completed successfully!\n\n"
                     f"📁 Results saved on cluster: {outdir}\n"

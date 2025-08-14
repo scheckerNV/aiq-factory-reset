@@ -34,6 +34,15 @@ run_cmd 'cmsh -c "device list -f name,status,mac,ip,category,softwareimage"' \
         "02_device_list.txt" \
         "Detailed device information"
 
+# GPU information across nodes (for reader compatibility)
+run_cmd 'cmsh -c "device foreach * (nvidia-smi -L)"' \
+        "10_gpu_list.txt" \
+        "Per-node GPU list"
+
+run_cmd 'cmsh -c "device foreach * (nvidia-smi -q)"' \
+        "11_gpu_info.txt" \
+        "Per-node detailed GPU info"
+
 # 2) BCM and package versions
 run_cmd 'cmsh -c "main; versioninfo"' \
         "16_bcm_version_info.txt" \
@@ -120,6 +129,15 @@ run_cmd 'cmsh -c "device firmware info"' \
   cmsh -c "device foreach * (ipmitool chassis status)" 2>&1
 } > "$OUTPUT_DIR/27_bmc_chassis_status.txt" || true
 
+# Reader-compatible BMC files
+run_cmd 'cmsh -c "device foreach * (ipmitool chassis status)"' \
+        "20_bmc_chassis.txt" \
+        "Per-node BMC chassis status"
+
+run_cmd 'cmsh -c "device foreach * (ipmitool sel elist)"' \
+        "21_bmc_sel.txt" \
+        "Per-node BMC SEL entries"
+
 # 7) Health and overview
 run_cmd 'cmsh -c "device overview"' \
         "28_device_overview.txt" \
@@ -128,6 +146,15 @@ run_cmd 'cmsh -c "device overview"' \
 run_cmd 'cmsh -c "monitoring healthconfigs"' \
         "29_health_configs.txt" \
         "Health configurations"
+
+# Reader-compatible device peripheral files
+run_cmd 'cmsh -c "device foreach * (lspci | grep -i nvidia)"' \
+        "30_lspci_nvidia.txt" \
+        "Per-node NVIDIA PCIe devices"
+
+run_cmd 'cmsh -c "device foreach * (lsblk)"' \
+        "40_block_devices.txt" \
+        "Per-node block devices"
 
 # 8) Summary
 {
