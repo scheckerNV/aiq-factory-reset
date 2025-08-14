@@ -142,7 +142,7 @@ class NodeAssessmentToolConfig(FunctionBaseConfig, name="node_assessment_tool"):
 @register_function(config_type=NodeAssessmentToolConfig)
 async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Builder):
 
-    async def _run_node_assessment(input_text: str) -> str:
+    async def _run_node_assessment(_input_text: str) -> str:
         """Upload and execute the dedicated node_assessment.sh script; return results dir."""
         try:
             script_path_on_disk = os.path.join(
@@ -403,11 +403,16 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         - "none": Request is informational only, no analysis needed
         - "diagnostics_only": Request asks for STATUS/STATE analysis
           (e.g., "current state", "health check", "what's wrong")
-        - "generate_bcm_commands": Request asks to PERFORM actions (e.g., "reset nodes", "reimage", "fix issues")
+        - "generate_bcm_commands": Request asks to PERFORM actions
+          (e.g., "reset nodes", "reimage", "fix issues")
         - "reset_nodes": Request specifically asks for factory reset
 
-        Respond in JSON with keys: rationale (bullets), action_needed (true/false),
-        action_type (one of above), and focus (short string).
+        STRICT FORMAT INSTRUCTIONS:
+        - Return ONLY a single JSON object with the following keys exactly:
+          {"rationale": ["...", "..."], "action_needed": true/false,
+           "action_type": "one_of: none|diagnostics_only|generate_bcm_commands|reset_nodes",
+           "focus": "short string"}
+        - Do not include any markdown, code fences, or extra commentary. JSON only.
         """)
 
     commands_prompt = PromptTemplate.from_template("""
@@ -421,7 +426,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         CONTEXT\n---\n{context}\n---
         """)
 
-    class OrchestratorState(TypedDict):
+    class OrchestratorState(TypedDict, total=False):
         input: str
         assessment: str
         analysis: str
@@ -430,6 +435,8 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         bcm_commands: str
         execution_result: str
         final_output: str
+        action_type: str
+        decision_json: str
 
     async def assess_node(state: OrchestratorState):
         if not node_assess:
@@ -465,20 +472,55 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         } | decide_prompt | reasoning_llm | StrOutputParser())
 
         try:
-            decision_json = await chain.ainvoke(state["input"])
+            decision_json = await chain.ainvoke(state.get("input", ""))
         except Exception:  # noqa: BLE001
             decision_json = ("{\"rationale\": [\"LLM error\"], \"action_needed\": false, "
-                             "\"action_type\": \"none\"}")
+                             "\"action_type\": \"diagnostics_only\", \"focus\": \"\"}")
 
-        analysis_report = ("### Reasoning\n" + decision_json + "\n\n" + (reader_out[:1500] if reader_out else "") +
-                           "\n\n" + dgx_guidance)
-        return {**state, "analysis": analysis_report}
+        # Parse decision and store action_type robustly
+        import json as _json  # local import to avoid global pollution
+
+        extracted_json = decision_json
+        action_type = "diagnostics_only"
+        try:
+            # Try direct parse first
+            decision_obj = _json.loads(decision_json)
+            action_type = decision_obj.get("action_type", action_type)
+        except Exception:
+            # Attempt to extract JSON object from a noisy string
+            try:
+                start_idx = decision_json.find('{"')
+                if start_idx == -1:
+                    start_idx = decision_json.find("{'")
+                if start_idx != -1:
+                    brace_count = 0
+                    end_idx = start_idx
+                    for i, char in enumerate(decision_json[start_idx:], start_idx):
+                        if char in '{}':
+                            brace_count += 1 if char == '{' else -1
+                            if brace_count == 0:
+                                end_idx = i + 1
+                                break
+                    extracted_json = decision_json[start_idx:end_idx]
+                    decision_obj = _json.loads(extracted_json.replace("'", '"'))
+                    action_type = decision_obj.get("action_type", action_type)
+            except Exception:
+                pass
+
+        analysis_report = ("### Reasoning\n" + (extracted_json or decision_json) + "\n\n" +
+                           (reader_out[:1500] if reader_out else "") + "\n\n" + dgx_guidance)
+        return {
+            **state,
+            "analysis": analysis_report,
+            "action_type": action_type,
+            "decision_json": (extracted_json or decision_json)
+        }
 
     async def run_react_agent(state: OrchestratorState):
         try:
             react_agent_tool = builder.get_tool(fn_name=config.react_agent_fn, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
             # Provide explicit context to the ReAct agent
-            react_input = (f"Original request: {state['input']}\n\n"
+            react_input = (f"Original request: {state.get('input', '')}\n\n"
                            "You are the DGX ReAct Agent. Think step-by-step, call tools as needed "
                            "(DGX/BCM RAG, assessment reader) to determine the proper DGX node actions. "
                            "Provide intermediate thoughts and final plan.")
@@ -493,7 +535,8 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         context = ("ASSESSMENT:\n" + (state.get("assessment", "") or "") + "\n\n" + "REACT_AGENT_PLAN:\n" +
                    (state.get("react_agent_output", "") or ""))
         try:
-            bcm_query = await (commands_prompt | reasoning_llm | StrOutputParser()).ainvoke({"context": context})
+            chain_for_cmds = commands_prompt | reasoning_llm | StrOutputParser()
+            bcm_query = await chain_for_cmds.ainvoke({"context": context})
         except Exception:
             bcm_query = f"CONTEXT:\n{context}"
         try:
@@ -535,34 +578,8 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     # Smart routing based on LLM decision analysis
     def route_after_analysis(state: OrchestratorState):
         """Route based on LLM decision from analysis phase"""
-        import json
-
-        analysis = state.get("analysis", "")
-
-        # Extract decision JSON from analysis
-        try:
-            # Look for JSON in the analysis text
-            start_idx = analysis.find('{"')
-            if start_idx == -1:
-                start_idx = analysis.find("{'")
-            if start_idx != -1:
-                # Find the end of JSON (simple heuristic)
-                brace_count = 0
-                end_idx = start_idx
-                for i, char in enumerate(analysis[start_idx:], start_idx):
-                    if char in '{}':
-                        brace_count += 1 if char == '{' else -1
-                        if brace_count == 0:
-                            end_idx = i + 1
-                            break
-
-                json_str = analysis[start_idx:end_idx]
-                decision = json.loads(json_str)
-                action_type = decision.get("action_type", "generate_bcm_commands")
-            else:
-                action_type = "generate_bcm_commands"  # fallback
-        except (json.JSONDecodeError, Exception):
-            action_type = "generate_bcm_commands"  # fallback on parse error
+        # Prefer the parsed/stored action_type with a safe default
+        action_type = state.get("action_type", "diagnostics_only")
 
         # Route based on LLM decision
         routing_map = {
@@ -578,30 +595,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
     def route_after_react_agent(state: OrchestratorState):
         """Route after react agent based on original LLM decision"""
-        import json
-
-        analysis = state.get("analysis", "")
-        try:
-            # Re-parse the original decision
-            start_idx = analysis.find('{"')
-            if start_idx == -1:
-                start_idx = analysis.find("{'")
-            if start_idx != -1:
-                brace_count = 0
-                end_idx = start_idx
-                for i, char in enumerate(analysis[start_idx:], start_idx):
-                    if char in '{}':
-                        brace_count += 1 if char == '{' else -1
-                        if brace_count == 0:
-                            end_idx = i + 1
-                            break
-                json_str = analysis[start_idx:end_idx]
-                decision = json.loads(json_str)
-                action_type = decision.get("action_type", "generate_bcm_commands")
-            else:
-                action_type = "generate_bcm_commands"
-        except (json.JSONDecodeError, Exception):
-            action_type = "generate_bcm_commands"
+        action_type = state.get("action_type", "diagnostics_only")
 
         if action_type == "diagnostics_only":
             print(f"🔍 Post-agent routing: {action_type} → synthesize_diagnostics_only")
@@ -648,7 +642,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
     app = graph.compile()
 
-    async def _run(input_text: str) -> str:
+    async def _run(input_text: str) -> str:  # noqa: ARG001 - required by framework signature
         state: OrchestratorState = {
             "input": input_text,
             "assessment": "",
