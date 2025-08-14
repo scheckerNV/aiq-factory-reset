@@ -58,8 +58,8 @@ functions:
     parse_agent_response_max_retries: 3
     retry_agent_response_parsing_errors: true
 
-  dgx_factory_reset_orchestrator:
-    _type: aiq_dgx_factory_reset/dgx_factory_reset_orchestrator
+  dgx_orchestrator:
+    _type: aiq_dgx_factory_reset/dgx_orchestrator
     reasoning_llm_name: reasoning_llm
     react_agent_fn: dgx_react_agent
     executor_fn: bcm_executor
@@ -80,7 +80,7 @@ llms:
 workflow:
   _type: reasoning_agent
   llm_name: reasoning_llm
-  augmented_fn: dgx_factory_reset_orchestrator   # use DGX orchestrator
+  augmented_fn: dgx_orchestrator   # use DGX orchestrator
   verbose: true
   reasoning_prompt_template: |
     <think>
