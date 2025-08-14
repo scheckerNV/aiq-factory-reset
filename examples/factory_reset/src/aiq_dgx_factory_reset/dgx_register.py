@@ -234,16 +234,21 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
 
             files_map = {
                 "summary": ["00_SUMMARY.txt"],
-                "gpu": ["10_gpu_list.txt", "11_gpu_info.txt"],
-                "bmc": ["20_bmc_chassis.txt", "21_bmc_sel.txt"],
-                "devices": ["30_lspci_nvidia.txt", "40_block_devices.txt"],
+                "devices": ["01_device_status.txt", "02_device_list.txt"],
+                "bcm": ["16_bcm_version_info.txt", "17_pkg_cmdaemon.txt", "18_pkg_cluster_tools.txt"],
+                "hardware": ["19_hardware_profiles.txt", "20_os_versions.txt", "21_bios_versions.txt"],
+                "firmware": ["22_firmware_info.txt", "23_sample_bios_settings.txt"],
+                "bmc": ["24_bmc_info.txt"],
+                "overview": ["25_device_overview.txt", "26_burn_configs.txt"],
                 "full": [
                     "00_SUMMARY.txt",
-                    "10_gpu_list.txt",
-                    "11_gpu_info.txt",
-                    "20_bmc_chassis.txt",
-                    "21_bmc_sel.txt",
-                    "30_lspci_nvidia.txt",
+                    "01_device_status.txt",
+                    "02_device_list.txt",
+                    "16_bcm_version_info.txt",
+                    "19_hardware_profiles.txt",
+                    "20_os_versions.txt",
+                    "24_bmc_info.txt",
+                    "25_device_overview.txt"
                 ],
             }
 
