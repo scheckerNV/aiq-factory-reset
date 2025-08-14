@@ -253,10 +253,23 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
             }
 
             patterns = None
+            # First try keyword matching
             for key, vals in files_map.items():
                 if key in query.lower():
                     patterns = vals
                     break
+
+            # If no keyword match, try specific filename matching
+            if patterns is None:
+                for key, vals in files_map.items():
+                    for filename in vals:
+                        if filename.lower() in query.lower():
+                            patterns = vals
+                            break
+                    if patterns:
+                        break
+
+            # Default fallback
             if patterns is None:
                 patterns = files_map["summary"]
 
@@ -386,8 +399,15 @@ async def dgx_factory_reset_orchestrator(config: DGXFactoryResetOrchestratorConf
         Assessment Summary (may be empty):
         {assessment}
 
-        Decide if action is needed now. Respond in JSON with keys: rationale (bullets), action_needed (true/false),
-        action_type (one of: none, diagnostics_only, generate_bcm_commands, reset_nodes), and focus (short string).
+        Decide what action is needed. Choose action_type based on request intent:
+        - "none": Request is informational only, no analysis needed
+        - "diagnostics_only": Request asks for STATUS/STATE analysis
+          (e.g., "current state", "health check", "what's wrong")
+        - "generate_bcm_commands": Request asks to PERFORM actions (e.g., "reset nodes", "reimage", "fix issues")
+        - "reset_nodes": Request specifically asks for factory reset
+
+        Respond in JSON with keys: rationale (bullets), action_needed (true/false),
+        action_type (one of above), and focus (short string).
         """)
 
     commands_prompt = PromptTemplate.from_template("""
