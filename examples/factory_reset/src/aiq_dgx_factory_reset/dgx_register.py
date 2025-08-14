@@ -142,7 +142,7 @@ class NodeAssessmentToolConfig(FunctionBaseConfig, name="node_assessment_tool"):
 @register_function(config_type=NodeAssessmentToolConfig)
 async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Builder):
 
-    async def _run_node_assessment(_input_text: str) -> str:
+    async def _run_node_assessment(input_text: str) -> str:
         """Upload and execute the dedicated node_assessment.sh script; return results dir."""
         try:
             script_path_on_disk = os.path.join(
@@ -448,7 +448,13 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         return {**state, "assessment": assess_out}
 
     async def analyze_and_decide(state: OrchestratorState):
-        # Read results if available
+        """
+        First pass: Classify the request without biasing it with "reset" content.
+        Second pass: If classification suggests an action, enrich context with relevant RAG guidance.
+        """
+        import json as _json
+
+        # Assessment / summary from node_reader
         reader_out = ""
         if node_reader:
             try:
@@ -456,59 +462,59 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             except Exception:
                 reader_out = ""
 
-        # Call DGX RAG for guidance
-        dgx_guidance = ""
-        if dgx_rag:
-            try:
-                dgx_guidance = await dgx_rag.ainvoke(
-                    "DGX node reset prerequisites and best practices for H100-based SuperPOD.")
-            except Exception:
-                dgx_guidance = ""
-
-        # Reasoning LLM decision
-        chain = ({
+        # === PASS 1: Initial classification with a neutral query ===
+        chain_initial = ({
             "request": RunnablePassthrough(),
             "assessment": lambda _: reader_out or state.get("assessment", ""),
         } | decide_prompt | reasoning_llm | StrOutputParser())
 
         try:
-            decision_json = await chain.ainvoke(state.get("input", ""))
-        except Exception:  # noqa: BLE001
-            decision_json = ("{\"rationale\": [\"LLM error\"], \"action_needed\": false, "
-                             "\"action_type\": \"diagnostics_only\", \"focus\": \"\"}")
+            decision_json = await chain_initial.ainvoke(state.get("input", ""))
+        except Exception:  # Fallback for LLM failure
+            decision_json = (
+                "{\"rationale\": [\"LLM error\"], \"action_needed\": false, "
+                "\"action_type\": \"diagnostics_only\", \"focus\": \"\"}"
+            )
 
-        # Parse decision and store action_type robustly
-        import json as _json  # local import to avoid global pollution
-
+        # Try parsing JSON
         extracted_json = decision_json
         action_type = "diagnostics_only"
         try:
-            # Try direct parse first
             decision_obj = _json.loads(decision_json)
             action_type = decision_obj.get("action_type", action_type)
         except Exception:
-            # Attempt to extract JSON object from a noisy string
+            # Try to extract JSON object from noisy string
             try:
                 start_idx = decision_json.find('{"')
-                if start_idx == -1:
-                    start_idx = decision_json.find("{'")
                 if start_idx != -1:
                     brace_count = 0
-                    end_idx = start_idx
-                    for i, char in enumerate(decision_json[start_idx:], start_idx):
-                        if char in '{}':
-                            brace_count += 1 if char == '{' else -1
+                    for i, ch in enumerate(decision_json[start_idx:], start_idx):
+                        if ch in '{}':
+                            brace_count += 1 if ch == '{' else -1
                             if brace_count == 0:
-                                end_idx = i + 1
+                                extracted_json = decision_json[start_idx: i + 1]
                                 break
-                    extracted_json = decision_json[start_idx:end_idx]
                     decision_obj = _json.loads(extracted_json.replace("'", '"'))
                     action_type = decision_obj.get("action_type", action_type)
             except Exception:
                 pass
 
-        analysis_report = ("### Reasoning\n" + (extracted_json or decision_json) + "\n\n" +
-                           (reader_out[:1500] if reader_out else "") + "\n\n" + dgx_guidance)
+        # === PASS 2: Conditional RAG enrichment ===
+        dgx_guidance = ""
+        if action_type in ("generate_bcm_commands", "reset_nodes") and dgx_rag:
+            try:
+                dgx_guidance = await dgx_rag.ainvoke(
+                    "DGX node reset prerequisites and best practices for H100-based SuperPOD."
+                )
+            except Exception:
+                dgx_guidance = ""
+
+        analysis_report = (
+            "### Reasoning\n" + (extracted_json or decision_json) + "\n\n" +
+            (reader_out[:1500] if reader_out else "") + "\n\n" +
+            dgx_guidance
+        )
+
         return {
             **state,
             "analysis": analysis_report,
