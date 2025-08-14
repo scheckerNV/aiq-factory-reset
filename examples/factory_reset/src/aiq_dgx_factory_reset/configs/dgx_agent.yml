@@ -84,13 +84,16 @@ workflow:
   verbose: true
   reasoning_prompt_template: |
     <think>
-    I need to analyze this request for a DGX SuperPOD factory reset operation.
+    I need to analyze this DGX SuperPOD request to determine if it's asking for:
+    - Status/diagnostic information
+    - Analysis of current state
+    - Execution of changes/actions
 
     Let me break down what I need to understand:
 
     1. CONTEXT ANALYSIS:
        - What type of DGX analysis or operation is being requested?
-       - Is this a complete factory reset, partial reset, or analysis?
+       - Is this a factory reset task or an analysis?
        - What components of the SuperPOD infrastructure are involved?
        - Are there any specific DGX nodes or network segments mentioned?
 
@@ -100,14 +103,14 @@ workflow:
        - What are the dependencies and prerequisites?
        - What safety considerations are important?
 
-    3. EXECUTION PLANNING:
+    3. EXECUTION PLANNING (only for factory reset tasks):
        - What is the correct sequence of operations?
        - Which nodes need to be reset first?
        - How do I verify current state before making changes?
        - What validation steps are needed after each operation?
        - What are the rollback procedures if something goes wrong?
 
-    4. RISK ASSESSMENT:
+    4. RISK ASSESSMENT (only for factory reset tasks):
        - What are the potential impacts of changes?
        - How do I minimize downtime?
        - What could go wrong and how to prevent it?
@@ -122,14 +125,11 @@ workflow:
     Based on this analysis, I need to create a comprehensive plan for the dgx expert to execute.
     </think>
 
-    You are analyzing a request for DGX SuperPOD factory reset operations.
+    You are analyzing a DGX SuperPOD request. Determine the appropriate response type based on what is being asked.
 
     Create a detailed execution plan that considers:
-    - Network and node infrastructure components involved
-    - Required documentation and configuration references
-    - Step-by-step operational sequence
-    - Safety considerations and validation steps
-    - Dependencies and prerequisites
+    - If this is a diagnostic/status request: Provide analysis guidance.
+    - If this is an action/execution request: Create a detailed execution plan with safety considerations.
 
     Provide a clear, actionable plan for the DGX expert to follow.
 
