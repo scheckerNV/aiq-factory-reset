@@ -1,5 +1,5 @@
 """
-DGX Factory Reset: LangGraph-based tools and orchestrator
+DGX AI Factory Analysis: LangGraph-based tools and orchestrator
 
 Implements DGX-specific RAG tools, node assessment/readers, and a
 LangGraph orchestrator that wraps a ReAct agent to: analyze state →
@@ -347,11 +347,11 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
 print("✅ DGX Node Results Reader tool registered successfully")
 
 # ========================
-# DGX Factory Reset Orchestrator (LangGraph)
+# DGX Orchestrator (LangGraph)
 # ========================
 
 
-class DGXFactoryResetOrchestratorConfig(FunctionBaseConfig, name="dgx_factory_reset_orchestrator"):
+class DGXOrchestratorConfig(FunctionBaseConfig, name="dgx_orchestrator"):
     """LangGraph orchestrator that wraps a DGX ReAct agent and tools."""
 
     reasoning_llm_name: str = Field(description="LLM used for reasoning and planning")
@@ -362,8 +362,8 @@ class DGXFactoryResetOrchestratorConfig(FunctionBaseConfig, name="dgx_factory_re
     )
 
 
-@register_function(config_type=DGXFactoryResetOrchestratorConfig, framework_wrappers=[LLMFrameworkEnum.LANGCHAIN])
-async def dgx_factory_reset_orchestrator(config: DGXFactoryResetOrchestratorConfig, builder: Builder):
+@register_function(config_type=DGXOrchestratorConfig, framework_wrappers=[LLMFrameworkEnum.LANGCHAIN])
+async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     from langchain_core.output_parsers import StrOutputParser
     from langchain_core.prompts import PromptTemplate
     from langchain_core.runnables import RunnablePassthrough
@@ -392,7 +392,7 @@ async def dgx_factory_reset_orchestrator(config: DGXFactoryResetOrchestratorConf
 
     # Prompts
     decide_prompt = PromptTemplate.from_template("""
-        You are the DGX Factory Reset Orchestrator. Analyze the current request and the node assessment data.
+        You are the DGX Orchestrator. Analyze the current request and the node assessment data.
 
         Request: {request}
 
@@ -515,7 +515,7 @@ async def dgx_factory_reset_orchestrator(config: DGXFactoryResetOrchestratorConf
         return {**state, "execution_result": exec_out}
 
     async def synthesize(state: OrchestratorState):
-        final = ("# 🧭 DGX Factory Reset Orchestration\n\n"
+        final = ("# 🧭 DGX Orchestration\n\n"
                  "## Reasoning and Decision\n" + (state.get("analysis", "") or "") + "\n\n"
                  "## ReAct Agent Plan and Steps\n" + (state.get("react_agent_output", "") or "") + "\n\n"
                  "## Generated BCM Commands\n" + (state.get("bcm_commands", "") or "") + "\n\n"
@@ -524,7 +524,7 @@ async def dgx_factory_reset_orchestrator(config: DGXFactoryResetOrchestratorConf
 
     async def synthesize_diagnostics_only(state: OrchestratorState):
         """Synthesize results for diagnostics-only requests (no command generation/execution)"""
-        final = ("# 🧭 DGX Factory Reset Orchestration (Diagnostics Only)\n\n"
+        final = ("# 🧭 DGX Orchestration (Diagnostics Only)\n\n"
                  "## Reasoning and Decision\n" + (state.get("analysis", "") or "") + "\n\n"
                  "## ReAct Agent Analysis\n" + (state.get("react_agent_output", "") or "") + "\n\n"
                  "## Recommendation\n"
@@ -669,4 +669,4 @@ async def dgx_factory_reset_orchestrator(config: DGXFactoryResetOrchestratorConf
     )
 
 
-print("✅ DGX Factory Reset Orchestrator registered successfully")
+print("✅ DGX Orchestrator registered successfully")
