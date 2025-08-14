@@ -142,7 +142,7 @@ class NodeAssessmentToolConfig(FunctionBaseConfig, name="node_assessment_tool"):
 @register_function(config_type=NodeAssessmentToolConfig)
 async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Builder):
 
-    async def _run_node_assessment(_: str) -> str:
+    async def _run_node_assessment(_input_text: str) -> str:
         """Collect minimal DGX node state via SSH. Tolerant to missing tools."""
         try:
             script_lines = [
@@ -346,7 +346,6 @@ async def dgx_factory_reset_orchestrator(config: DGXFactoryResetOrchestratorConf
 
     # Acquire handles lazily so registration order doesn't matter
     reasoning_llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
-    react_agent_tool = builder.get_tool(fn_name=config.react_agent_fn, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
 
     # Optional tools used directly by the orchestrator
     try:
@@ -444,6 +443,7 @@ async def dgx_factory_reset_orchestrator(config: DGXFactoryResetOrchestratorConf
 
     async def run_react_agent(state: OrchestratorState):
         try:
+            react_agent_tool = builder.get_tool(fn_name=config.react_agent_fn, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
             # Provide explicit context to the ReAct agent
             react_input = (f"Original request: {state['input']}\n\n"
                            "You are the DGX ReAct Agent. Think step-by-step, call tools as needed "

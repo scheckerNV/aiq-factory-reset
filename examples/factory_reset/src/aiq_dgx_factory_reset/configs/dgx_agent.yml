@@ -45,7 +45,7 @@ functions:
       - dgx_expert_rag
       - bcm_documentation_rag
       - node_assessment_tool
-      - node_results_reader 
+      - node_results_reader
       - hitl_code_approval
       - bcm_executor
     llm_name: execution_llm
@@ -58,6 +58,19 @@ functions:
     reasoning_llm_name: reasoning_llm
     react_agent_fn: dgx_react_agent
     executor_fn: bcm_executor
+
+llms:
+  reasoning_llm:
+    _type: nim
+    model_name: meta/llama-3.1-70b-instruct
+    max_tokens: 4096
+    temperature: 0.1
+
+  execution_llm:
+    _type: nim
+    model_name: meta/llama-3.1-70b-instruct
+    max_tokens: 4096
+    temperature: 0.1
 
 workflow:
   _type: reasoning_agent
