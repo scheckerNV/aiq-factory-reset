@@ -471,10 +471,8 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         try:
             decision_json = await chain_initial.ainvoke(state.get("input", ""))
         except Exception:  # Fallback for LLM failure
-            decision_json = (
-                "{\"rationale\": [\"LLM error\"], \"action_needed\": false, "
-                "\"action_type\": \"diagnostics_only\", \"focus\": \"\"}"
-            )
+            decision_json = ("{\"rationale\": [\"LLM error\"], \"action_needed\": false, "
+                             "\"action_type\": \"diagnostics_only\", \"focus\": \"\"}")
 
         # Try parsing JSON
         extracted_json = decision_json
@@ -492,7 +490,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                         if ch in '{}':
                             brace_count += 1 if ch == '{' else -1
                             if brace_count == 0:
-                                extracted_json = decision_json[start_idx: i + 1]
+                                extracted_json = decision_json[start_idx:i + 1]
                                 break
                     decision_obj = _json.loads(extracted_json.replace("'", '"'))
                     action_type = decision_obj.get("action_type", action_type)
@@ -504,16 +502,12 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         if action_type in ("generate_bcm_commands", "reset_nodes") and dgx_rag:
             try:
                 dgx_guidance = await dgx_rag.ainvoke(
-                    "DGX node reset prerequisites and best practices for H100-based SuperPOD."
-                )
+                    "DGX node reset prerequisites and best practices for H100-based SuperPOD.")
             except Exception:
                 dgx_guidance = ""
 
-        analysis_report = (
-            "### Reasoning\n" + (extracted_json or decision_json) + "\n\n" +
-            (reader_out[:1500] if reader_out else "") + "\n\n" +
-            dgx_guidance
-        )
+        analysis_report = ("### Reasoning\n" + (extracted_json or decision_json) + "\n\n" +
+                           (reader_out[:1500] if reader_out else "") + "\n\n" + dgx_guidance)
 
         return {
             **state,
@@ -523,16 +517,44 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         }
 
     async def run_react_agent(state: OrchestratorState):
+        """
+        Run the DGX ReAct agent with context tailored to the action_type.
+        - For reset_nodes: include full reasoning analysis.
+        - For other cases: provide neutral, task-appropriate context without
+        factory reset framing to avoid bias.
+        """
         try:
             react_agent_tool = builder.get_tool(fn_name=config.react_agent_fn, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
-            # Provide explicit context to the ReAct agent
+        except Exception as e:
+            return {**state, "react_agent_output": f"❌ DGX ReAct agent not found: {str(e)}"}
+
+        action_type = state.get("action_type", "diagnostics_only")
+
+        # ==== Context selection based on action type ====
+        if action_type == "reset_nodes":
+            # Keep full detailed reasoning & reset guidance
             react_input = (f"Original request: {state.get('input', '')}\n\n"
-                           "You are the DGX ReAct Agent. Think step-by-step, call tools as needed "
-                           "(DGX/BCM RAG, assessment reader) to determine the proper DGX node actions. "
-                           "Provide intermediate thoughts and final plan.")
+                           f"{state.get('analysis', '')}\n\n"
+                           "You are the DGX ReAct Agent. This is a FACTORY RESET request. "
+                           "Call tools as needed (DGX/BCM RAG, assessment reader) to determine the exact steps "
+                           "and produce a precise, safe execution plan.")
+        else:
+            # Neutral diagnostic/action planning without reset framing
+            react_input = (f"Original request: {state.get('input', '')}\n\n"
+                           "You are the DGX ReAct Agent. Focus on diagnosing the current DGX/SuperPOD state, "
+                           "summarizing results, and providing action recommendations ONLY if clearly requested. "
+                           "Avoid assuming a factory reset unless explicitly stated in the request.")
+
+            # Optionally add first 1.5k chars of assessment/summary if available
+            if state.get("assessment"):
+                react_input += "\n\nNode Assessment Summary:\n" + state.get("assessment", "")[:1500]
+
+        # ==== Invoke the agent ====
+        try:
             out = await react_agent_tool.ainvoke(react_input)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             out = f"❌ DGX ReAct agent error: {str(e)}"
+
         return {**state, "react_agent_output": out}
 
     async def generate_commands(state: OrchestratorState):
