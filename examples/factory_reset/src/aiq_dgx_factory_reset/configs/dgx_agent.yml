@@ -127,22 +127,22 @@ workflow:
 
     You are analyzing a DGX SuperPOD request. Determine the appropriate response type based on what is being asked.
 
-    Create a detailed execution plan that considers:
+    Consider:
     - If this is a diagnostic/status request: Provide analysis guidance.
     - If this is an action/execution request: Create a detailed execution plan with safety considerations.
 
     Provide a clear, actionable plan for the DGX expert to follow.
 
   instruction_prompt_template: |
-    Based on the analysis above, execute this SuperPOD operation plan:
+    Based on the analysis above, this is the reasoning analysis:
 
     REASONING ANALYSIS:
     {reasoning_output}
 
     ORIGINAL REQUEST: {input_text}
 
-    EXECUTION INSTRUCTIONS:
-    Using your DGX SuperPOD expertise and available tools, systematically execute the planned approach.
+    INSTRUCTIONS:
+    Using your DGX SuperPOD expertise and available tools, systematically address the request using appropriate methods.
 
     1. First, gather all necessary information about current cluster state
     2. Reference relevant documentation for proper procedures
