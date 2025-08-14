@@ -5,22 +5,26 @@ general:
   use_uvloop: true
 
 functions:
+  # BCM Documentation RAG Tool with LlamaParse and Multi-Agent Workflow
   bcm_documentation_rag:
     _type: aiq_dgx_factory_reset/bcm_documentation_rag
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
     persist_dir: "examples/factory_reset/storage/bcm_index"
 
+  # DGX Expert RAG Tool with LlamaParse and Multi-Agent Workflow
   dgx_expert_rag:
     _type: aiq_dgx_factory_reset/dgx_expert_rag
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/dgx_expert"
     persist_dir: "examples/factory_reset/storage/dgx_index"
 
+  # Assess state of nodes in cluster
   node_assessment_tool:
     _type: aiq_dgx_factory_reset/node_assessment_tool
     cluster_host: "localhost"
     cluster_user: "root"
     timeout: 300
 
+  # Read results of node assessment
   node_results_reader:
     _type: aiq_dgx_factory_reset/node_results_reader
     cluster_host: "localhost"
@@ -31,6 +35,7 @@ functions:
     _type: aiq_dgx_factory_reset/hitl_code_approval
     prompt: "Review the following BCM commands for DGX reset (approve yes/no)"
 
+  # Execute produced BCM commands with approval
   bcm_executor:
     _type: aiq_dgx_factory_reset/code_execution_with_approval
     cluster_host: "localhost"

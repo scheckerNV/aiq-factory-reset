@@ -143,51 +143,34 @@ class NodeAssessmentToolConfig(FunctionBaseConfig, name="node_assessment_tool"):
 async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Builder):
 
     async def _run_node_assessment(_input_text: str) -> str:
-        """Collect minimal DGX node state via SSH. Tolerant to missing tools."""
+        """Upload and execute the dedicated node_assessment.sh script; return results dir."""
         try:
-            script_lines = [
-                "#!/bin/bash",
-                "set +e",
-                "OUTDIR=\\\"/tmp/node_assessment_$(date +%Y%m%d_%H%M%S)\\\"",
-                "mkdir -p \"$OUTDIR\"",
-                "echo 'DGX Node Assessment' > \"$OUTDIR/00_SUMMARY.txt\"",
-                "hostname >> \"$OUTDIR/00_SUMMARY.txt\" 2>/dev/null",
-                "uptime >> \"$OUTDIR/00_SUMMARY.txt\" 2>/dev/null",
-                "nvidia-smi -L > \"$OUTDIR/10_gpu_list.txt\" 2>&1 || true",
-                "nvidia-smi -q > \"$OUTDIR/11_gpu_info.txt\" 2>&1 || true",
-                "ipmitool chassis status > \"$OUTDIR/20_bmc_chassis.txt\" 2>&1 || true",
-                "ipmitool sel elist > \"$OUTDIR/21_bmc_sel.txt\" 2>&1 || true",
-                "lspci | grep -i nvidia > \"$OUTDIR/30_lspci_nvidia.txt\" 2>&1 || true",
-                "lsblk > \"$OUTDIR/40_block_devices.txt\" 2>&1 || true",
-                "echo $OUTDIR",
-            ]
+            script_path_on_disk = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "scripts",
+                "node_assessment.sh",
+            )
+            if not os.path.exists(script_path_on_disk):
+                return f"❌ node_assessment.sh not found at {script_path_on_disk}"
 
-            script = "\n".join(script_lines)
-
-            # Write locally and upload via scp if needed
-            import tempfile
-
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
-                f.write(script)
-                local_path = f.name
-            os.chmod(local_path, 0o755)
-
+            # Local run
             if config.cluster_host == "localhost":
-                cmd = [local_path]
-                proc = await asyncio.create_subprocess_exec(*cmd,
-                                                            stdout=asyncio.subprocess.PIPE,
-                                                            stderr=asyncio.subprocess.PIPE)
+                proc = await asyncio.create_subprocess_exec(
+                    script_path_on_disk,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
                 if proc.returncode != 0:
                     return f"❌ Local assessment failed: {stderr.decode('utf-8')}"
                 outdir = stdout.decode("utf-8").strip().splitlines()[-1]
                 return f"✅ Node assessment complete. Results in: {outdir}"
 
-            # Remote execution
+            # Remote upload and run
             scp_cmd = [
                 "scp",
-                local_path,
-                f"{config.cluster_user}@{config.cluster_host}:/tmp/dgx_node_assessment.sh",
+                script_path_on_disk,
+                f"{config.cluster_user}@{config.cluster_host}:/tmp/node_assessment.sh",
             ]
             scp_proc = await asyncio.create_subprocess_exec(*scp_cmd,
                                                             stdout=asyncio.subprocess.PIPE,
@@ -199,7 +182,7 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
             ssh_cmd = [
                 "ssh",
                 f"{config.cluster_user}@{config.cluster_host}",
-                "chmod +x /tmp/dgx_node_assessment.sh && /tmp/dgx_node_assessment.sh",
+                "chmod +x /tmp/node_assessment.sh && /tmp/node_assessment.sh",
             ]
             proc = await asyncio.create_subprocess_exec(*ssh_cmd,
                                                         stdout=asyncio.subprocess.PIPE,
@@ -265,13 +248,29 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
 
             if config.cluster_host == "localhost":
                 latest_dir = None
-                # Find latest local directory matching glob
-                for p in sorted(Path("/tmp").glob(Path(config.results_directory).name), reverse=True):
-                    if p.is_dir():
-                        latest_dir = p
+                # Allow explicit dir in query to override
+                explicit = None
+                for token in query.split():
+                    if token.startswith("/tmp/node_assessment_") and Path(token).exists():
+                        explicit = Path(token)
                         break
+                if explicit and explicit.is_dir():
+                    latest_dir = explicit
+                else:
+                    # Prefer stable symlink if present
+                    symlink_path = Path("/tmp/node_assessment_latest")
+                    if symlink_path.exists() and symlink_path.is_dir():
+                        latest_dir = symlink_path
+                    else:
+                        # Find latest local directory matching glob (absolute glob)
+                        matches = sorted(Path("/tmp").glob(Path(config.results_directory).name), reverse=True)
+                        for p in matches:
+                            if p.is_dir():
+                                latest_dir = p
+                                break
                 if not latest_dir:
-                    return "❌ No local node assessment directory found."
+                    return ("❌ No local node assessment directory found. "
+                            "Run node_assessment_tool first or provide explicit path in query.")
                 results: list[str] = []
                 for pat in patterns:
                     for f in latest_dir.glob(pat):
@@ -489,11 +488,95 @@ async def dgx_factory_reset_orchestrator(config: DGXFactoryResetOrchestratorConf
                  "## Execution Result\n" + (state.get("execution_result", "") or "") + "\n")
         return {**state, "final_output": final}
 
-    def route_after_analysis(_: OrchestratorState):
-        # keep simple linear flow, plan -> agent -> commands -> exec
-        return "react_agent"
+    async def synthesize_diagnostics_only(state: OrchestratorState):
+        """Synthesize results for diagnostics-only requests (no command generation/execution)"""
+        final = ("# 🧭 DGX Factory Reset Orchestration (Diagnostics Only)\n\n"
+                 "## Reasoning and Decision\n" + (state.get("analysis", "") or "") + "\n\n"
+                 "## ReAct Agent Analysis\n" + (state.get("react_agent_output", "") or "") + "\n\n"
+                 "## Recommendation\n"
+                 "Based on the analysis above, see the ReAct agent's diagnostic findings and recommendations. "
+                 "No BCM commands were generated or executed as this was a diagnostics-only request.\n")
+        return {**state, "final_output": final}
 
-    # Build LangGraph
+    # Smart routing based on LLM decision analysis
+    def route_after_analysis(state: OrchestratorState):
+        """Route based on LLM decision from analysis phase"""
+        import json
+
+        analysis = state.get("analysis", "")
+
+        # Extract decision JSON from analysis
+        try:
+            # Look for JSON in the analysis text
+            start_idx = analysis.find('{"')
+            if start_idx == -1:
+                start_idx = analysis.find("{'")
+            if start_idx != -1:
+                # Find the end of JSON (simple heuristic)
+                brace_count = 0
+                end_idx = start_idx
+                for i, char in enumerate(analysis[start_idx:], start_idx):
+                    if char in '{}':
+                        brace_count += 1 if char == '{' else -1
+                        if brace_count == 0:
+                            end_idx = i + 1
+                            break
+
+                json_str = analysis[start_idx:end_idx]
+                decision = json.loads(json_str)
+                action_type = decision.get("action_type", "generate_bcm_commands")
+            else:
+                action_type = "generate_bcm_commands"  # fallback
+        except (json.JSONDecodeError, Exception):
+            action_type = "generate_bcm_commands"  # fallback on parse error
+
+        # Route based on LLM decision
+        routing_map = {
+            "none": "synthesize",  # Skip all action steps
+            "diagnostics_only": "react_agent",  # Run agent but skip execution
+            "generate_bcm_commands": "react_agent",  # Normal flow
+            "reset_nodes": "react_agent"  # Normal flow (could add special handling)
+        }
+
+        route = routing_map.get(action_type, "react_agent")
+        print(f"🧭 Orchestrator routing decision: {action_type} → {route}")
+        return route
+
+    def route_after_react_agent(state: OrchestratorState):
+        """Route after react agent based on original LLM decision"""
+        import json
+
+        analysis = state.get("analysis", "")
+        try:
+            # Re-parse the original decision
+            start_idx = analysis.find('{"')
+            if start_idx == -1:
+                start_idx = analysis.find("{'")
+            if start_idx != -1:
+                brace_count = 0
+                end_idx = start_idx
+                for i, char in enumerate(analysis[start_idx:], start_idx):
+                    if char in '{}':
+                        brace_count += 1 if char == '{' else -1
+                        if brace_count == 0:
+                            end_idx = i + 1
+                            break
+                json_str = analysis[start_idx:end_idx]
+                decision = json.loads(json_str)
+                action_type = decision.get("action_type", "generate_bcm_commands")
+            else:
+                action_type = "generate_bcm_commands"
+        except (json.JSONDecodeError, Exception):
+            action_type = "generate_bcm_commands"
+
+        if action_type == "diagnostics_only":
+            print(f"🔍 Post-agent routing: {action_type} → synthesize_diagnostics_only")
+            return "synthesize_diagnostics_only"
+        else:
+            print(f"⚙️ Post-agent routing: {action_type} → generate")
+            return "generate"  # Continue to command generation
+
+    # Build LangGraph with conditional routing
     graph = StateGraph(OrchestratorState)
     graph.add_node("assess", assess_node)
     graph.add_node("analyze", analyze_and_decide)
@@ -501,14 +584,33 @@ async def dgx_factory_reset_orchestrator(config: DGXFactoryResetOrchestratorConf
     graph.add_node("generate", generate_commands)
     graph.add_node("execute", execute_commands)
     graph.add_node("synthesize", synthesize)
+    graph.add_node("synthesize_diagnostics_only", synthesize_diagnostics_only)
 
     graph.set_entry_point("assess")
     graph.add_edge("assess", "analyze")
-    graph.add_conditional_edges("analyze", route_after_analysis, {"react_agent": "react_agent"})
-    graph.add_edge("react_agent", "generate")
+
+    # Key change: Multiple routing options from analyze
+    graph.add_conditional_edges(
+        "analyze",
+        route_after_analysis,
+        {
+            "react_agent": "react_agent",  # Normal flow or diagnostics
+            "synthesize": "synthesize"  # Skip all actions (action_type="none")
+        })
+
+    # Add conditional routing after react_agent based on original decision
+    graph.add_conditional_edges(
+        "react_agent",
+        route_after_react_agent,
+        {
+            "generate": "generate",  # Normal flow
+            "synthesize_diagnostics_only": "synthesize_diagnostics_only"  # Diagnostics only
+        })
+
     graph.add_edge("generate", "execute")
     graph.add_edge("execute", "synthesize")
     graph.add_edge("synthesize", END)
+    graph.add_edge("synthesize_diagnostics_only", END)
 
     app = graph.compile()
 
