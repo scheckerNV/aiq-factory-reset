@@ -449,10 +449,15 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
     async def analyze_and_decide(state: OrchestratorState):
         """
-        First pass: Classify the request without biasing it with "reset" content.
-        Second pass: If classification suggests an action, enrich context with relevant RAG guidance.
+        Two-pass analysis:
+        - Pass 1: neutral LLM classification (JSON).
+        - Pass 2: conditional RAG enrichment (only if action indicates commands/reset).
+        Adds deterministic keyword overrides to ensure reset requests are labeled correctly.
         """
         import json as _json
+        import logging
+
+        logger = logging.getLogger(__name__)
 
         # Assessment / summary from node_reader
         reader_out = ""
@@ -470,32 +475,90 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
         try:
             decision_json = await chain_initial.ainvoke(state.get("input", ""))
-        except Exception:  # Fallback for LLM failure
+        except Exception:
             decision_json = ("{\"rationale\": [\"LLM error\"], \"action_needed\": false, "
                              "\"action_type\": \"diagnostics_only\", \"focus\": \"\"}")
 
-        # Try parsing JSON
+        # Parse JSON (robust)
         extracted_json = decision_json
         action_type = "diagnostics_only"
+        decision_obj = None
         try:
             decision_obj = _json.loads(decision_json)
             action_type = decision_obj.get("action_type", action_type)
         except Exception:
-            # Try to extract JSON object from noisy string
+            # Attempt to extract JSON substring
             try:
                 start_idx = decision_json.find('{"')
+                if start_idx == -1:
+                    start_idx = decision_json.find("{'")
                 if start_idx != -1:
                     brace_count = 0
+                    end_idx = None
                     for i, ch in enumerate(decision_json[start_idx:], start_idx):
-                        if ch in '{}':
-                            brace_count += 1 if ch == '{' else -1
+                        if ch == '{':
+                            brace_count += 1
+                        elif ch == '}':
+                            brace_count -= 1
                             if brace_count == 0:
-                                extracted_json = decision_json[start_idx:i + 1]
+                                end_idx = i + 1
                                 break
-                    decision_obj = _json.loads(extracted_json.replace("'", '"'))
-                    action_type = decision_obj.get("action_type", action_type)
+                    if end_idx:
+                        extracted_json = decision_json[start_idx:end_idx]
+                        decision_obj = _json.loads(extracted_json.replace("'", '"'))
+                        action_type = decision_obj.get("action_type", action_type)
             except Exception:
+                # leave action_type as default
                 pass
+
+        # === Deterministic keyword overrides (safety + clarity) ===
+        user_input = (state.get("input", "") or "").lower()
+        reasoning_text = (decision_json or "").lower()
+
+        reset_keywords = [
+            "factory reset",
+            "factory-reset",
+            "reset nodes",
+            "reset node",
+            "wipe nodes",
+            "wipe node",
+            "wipe them",
+            "wipe completely",
+            "wipe all",
+            "wipe data",
+            "wipe",
+            "reimage",
+            "re-image"
+        ]
+        generate_keywords = [
+            "apply",
+            "deploy",
+            "execute",
+            "perform",
+            "create commands",
+            "run commands",
+            "generate bcm",
+            "generate commands",
+            "bcm",
+            "execute bcm",
+            "execute commands"
+        ]
+
+        override_applied = False
+        # If user explicitly requests reset, force reset_nodes
+        if any(k in user_input for k in reset_keywords) or any(k in reasoning_text for k in reset_keywords):
+            if action_type != "reset_nodes":
+                logger.info("Orchestrator override: detected reset keyword -> setting action_type='reset_nodes'")
+                action_type = "reset_nodes"
+                override_applied = True
+
+        # If user clearly requests execution/generation but not reset, prefer generate_bcm_commands
+        if not override_applied and action_type == "diagnostics_only":
+            if any(k in user_input for k in generate_keywords) or any(k in reasoning_text for k in generate_keywords):
+                logger.info(
+                    "Orchestrator override: detected generate keyword -> setting action_type='generate_bcm_commands'")
+                action_type = "generate_bcm_commands"
+                override_applied = True
 
         # === PASS 2: Conditional RAG enrichment ===
         dgx_guidance = ""
@@ -506,15 +569,27 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             except Exception:
                 dgx_guidance = ""
 
+        # Compose analysis report (store extracted decision JSON if possible)
         analysis_report = ("### Reasoning\n" + (extracted_json or decision_json) + "\n\n" +
                            (reader_out[:1500] if reader_out else "") + "\n\n" + dgx_guidance)
 
-        return {
-            **state,
-            "analysis": analysis_report,
-            "action_type": action_type,
-            "decision_json": (extracted_json or decision_json)
-        }
+        # If LLM returned a parsed object, keep it; otherwise synthesize a short JSON for traceability
+        if decision_obj is None:
+            try:
+                decision_obj = _json.loads(extracted_json.replace("'", '"'))
+            except Exception:
+                decision_obj = {
+                    "rationale": ["LLM output not parseable"],
+                    "action_needed": action_type != "diagnostics_only",
+                    "action_type": action_type,
+                    "focus": ""
+                }
+
+        # Ensure reported action_type matches any overrides
+        decision_obj["action_type"] = action_type
+        decision_json_out = _json.dumps(decision_obj)
+
+        return {**state, "analysis": analysis_report, "action_type": action_type, "decision_json": decision_json_out}
 
     async def run_react_agent(state: OrchestratorState):
         """
