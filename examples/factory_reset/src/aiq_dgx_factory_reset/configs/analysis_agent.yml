@@ -1,0 +1,90 @@
+general:
+  use_uvloop: true
+
+# Modular RAG via Milvus (ensure your Milvus is up and collections exist: bcm_docs, dgx_docs)
+embedders:
+  nvidia_embedder:
+    _type: nim
+    model_name: nvidia/nv-embedqa-e5-v5
+    truncate: "END"
+
+retrievers:
+  dgx_retriever:
+    _type: milvus_retriever
+    uri: http://localhost:19530
+    collection_name: "dgx_docs"
+    embedding_model: nvidia_embedder
+    top_k: 5
+
+  bcm_retriever:
+    _type: milvus_retriever
+    uri: http://localhost:19530
+    collection_name: "bcm_docs"
+    embedding_model: nvidia_embedder
+    top_k: 5
+
+functions:
+  # RAG tools (uses modular retrievers above)
+  dgx_expert_rag:
+    _type: aiq_retriever
+    retriever: dgx_retriever
+    topic: "Search DGX hardware documentation and operational guidance"
+
+  bcm_documentation_rag:
+    _type: aiq_retriever
+    retriever: bcm_retriever
+    topic: "Search BCM documentation and commands"
+
+  # Live readers (pull current state from prior assessments or explicit dirs)
+  node_results_reader:
+    _type: aiq_dgx_factory_reset/node_results_reader
+    cluster_host: "localhost"         # or your headnode IP
+    cluster_user: "root"
+    results_directory: "/tmp/node_assessment_*"
+
+  network_results_reader:
+    _type: aiq_dgx_factory_reset/network_results_reader
+    cluster_host: "localhost"
+    cluster_user: "root"
+    results_directory: "/tmp/cluster_assessment_*"
+
+  # Optional: read-only data collection (run if readers don't find fresh data)
+  node_assessment_tool:
+    _type: aiq_dgx_factory_reset/node_assessment_tool
+    cluster_host: "localhost"
+    cluster_user: "root"
+    timeout: 300
+
+  network_assessment_tool:
+    _type: aiq_dgx_factory_reset/network_assessment_tool
+    cluster_host: "localhost"
+    cluster_user: "root"
+    timeout: 300
+
+llms:
+  nim_llm:
+    _type: nim
+    model_name: meta/llama-3.1-70b-instruct
+    max_tokens: 2048
+    temperature: 0.0
+
+workflow:
+  _type: react_agent
+  tool_names:
+    - node_results_reader
+    - network_results_reader
+    - node_assessment_tool
+    - network_assessment_tool
+    - dgx_expert_rag
+    - bcm_documentation_rag
+  llm_name: nim_llm
+  verbose: true
+  system_prompt: |
+    You are an analysis-only cluster assistant. Your job is to provide factual answers about current cluster state.
+    Rules:
+    - Prefer reading current results first:
+      1) Try network_results_reader and node_results_reader with a relevant keyword (e.g., "summary", "devices", "firmware", "bmc", "full").
+      2) If results are missing or stale, run the corresponding assessment tool (network_assessment_tool or node_assessment_tool) and then re-read.
+    - Use RAG tools (bcm_documentation_rag, dgx_expert_rag) for corroboration, definitions, and procedure references — not as the primary source of live measurements.
+    - Do not execute any state-changing commands. Only collect, read, and summarize.
+    - Output a concise factual answer. If you used multiple sources, add a short "Sources:" line summarizing which tools/files you referenced.
