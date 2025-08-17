@@ -4,27 +4,64 @@
 general:
   use_uvloop: true
 
+# === NEW: MODULAR RAG COMPONENTS ===
+embedders:
+  nvidia_embedder:
+    _type: nim
+    model_name: nvidia/nv-embedqa-e5-v5
+    truncate: "END"
+
+retrievers:
+  dgx_retriever:
+    _type: milvus_retriever
+    uri: http://localhost:19530
+    collection_name: "dgx_docs"
+    embedding_model: nvidia_embedder
+    top_k: 5
+
+  bcm_retriever:
+    _type: milvus_retriever
+    uri: http://localhost:19530
+    collection_name: "bcm_docs"
+    embedding_model: nvidia_embedder
+    top_k: 5
+
 functions:
-  # BCM Documentation RAG Tool with LlamaParse and Multi-Agent Workflow
-  bcm_documentation_rag:
-    _type: aiq_dgx_factory_reset/bcm_documentation_rag
-    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
-    persist_dir: "examples/factory_reset/storage/bcm_index"
-
-  # DGX Expert RAG Tool with LlamaParse and Multi-Agent Workflow
+  # === NEW: RAG TOOLS USING RETRIEVERS ===
   dgx_expert_rag:
-    _type: aiq_dgx_factory_reset/dgx_expert_rag
-    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/dgx_expert"
-    persist_dir: "examples/factory_reset/storage/dgx_index"
+    _type: aiq_retriever
+    retriever: dgx_retriever
+    topic: "Search DGX hardware documentation and operational guidance"
 
-  # Assess state of nodes in cluster
+  bcm_documentation_rag:
+    _type: aiq_retriever
+    retriever: bcm_retriever
+    topic: "Search BCM (Bright Cluster Manager) documentation and commands"
+
+  # === DOCUMENT INGESTION TOOLS (NEW) ===
+  dgx_document_ingest:
+    _type: aiq_dgx_factory_reset/dgx_document_ingest
+    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/dgx_expert"
+    retriever_name: dgx_retriever
+    chunk_size: 1024
+    chunk_overlap: 200
+    force_reindex: false
+
+  bcm_document_ingest:
+    _type: aiq_dgx_factory_reset/bcm_document_ingest
+    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
+    retriever_name: bcm_retriever
+    chunk_size: 1024
+    chunk_overlap: 200
+    force_reindex: false
+
+  # === EXISTING TOOLS (UNCHANGED) ===
   node_assessment_tool:
     _type: aiq_dgx_factory_reset/node_assessment_tool
     cluster_host: "localhost"
     cluster_user: "root"
     timeout: 300
 
-  # Read results of node assessment
   node_results_reader:
     _type: aiq_dgx_factory_reset/node_results_reader
     cluster_host: "localhost"
@@ -35,7 +72,6 @@ functions:
     _type: aiq_dgx_factory_reset/hitl_code_approval
     prompt: "Review the following BCM commands for DGX reset (approve yes/no)"
 
-  # Execute produced BCM commands with approval
   bcm_executor:
     _type: aiq_dgx_factory_reset/code_execution_with_approval
     cluster_host: "localhost"
@@ -47,8 +83,8 @@ functions:
   dgx_react_agent:
     _type: react_agent
     tool_names:
-      - dgx_expert_rag
-      - bcm_documentation_rag
+      - dgx_expert_rag        # Now uses AIQ retriever
+      - bcm_documentation_rag # Now uses AIQ retriever
       - node_assessment_tool
       - node_results_reader
       - hitl_code_approval

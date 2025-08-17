@@ -24,13 +24,17 @@ from aiq.data_models.function import FunctionBaseConfig
 logger = logging.getLogger(__name__)
 
 # ========================
-# DGX Documentation RAG Tool
+# DGX Documentation RAG Tool (DEPRECATED - now using aiq_retriever)
 # ========================
 
-
+# NOTE: This function has been replaced by AIQ's aiq_retriever
+# The functionality is now provided through the config:
+#   dgx_expert_rag:
+#     _type: aiq_retriever
+#     retriever: dgx_retriever
+"""
 class DGXExpertRAGConfig(FunctionBaseConfig, name="dgx_expert_rag"):
-    """Search DGX documentation using accurate RAG retrieval"""
-
+    # Search DGX documentation using accurate RAG retrieval
     docs_path: str = Field(
         default="examples/factory_reset/src/aiq_dgx_factory_reset/docs/dgx_expert",
         description="Path to DGX documentation directory",
@@ -124,9 +128,192 @@ async def dgx_expert_rag(config: DGXExpertRAGConfig, _builder: Builder):
 
     yield FunctionInfo.from_fn(_search_dgx_docs,
                                description="DGX hardware operational guidance and procedures (RAG over DGX docs)")
+"""
+
+# print("✅ DGX Expert RAG tool registered successfully")
+
+# ========================
+# Document Ingestion Tools
+# ========================
 
 
-print("✅ DGX Expert RAG tool registered successfully")
+class DocumentIngestConfig(FunctionBaseConfig, name="dgx_document_ingest"):
+    """Ingest documents into a vector store using AIQ retrievers"""
+    docs_path: str = Field(description="Path to documentation directory")
+    retriever_name: str = Field(description="Name of the retriever to populate")
+    chunk_size: int = Field(default=1024, description="Size of text chunks")
+    chunk_overlap: int = Field(default=200, description="Overlap between chunks")
+    force_reindex: bool = Field(default=False, description="Force reindexing even if collection exists")
+
+
+@register_function(config_type=DocumentIngestConfig)
+async def dgx_document_ingest(config: DocumentIngestConfig, builder: Builder):
+    """Ingest DGX documentation with PDF support (no LlamaParse needed)"""
+
+    async def _ingest_docs(input_text: str) -> str:
+        try:
+            from llama_index.core import SimpleDirectoryReader
+            from llama_index.core.node_parser import SentenceSplitter
+            from pymilvus import CollectionSchema
+            from pymilvus import DataType
+            from pymilvus import FieldSchema
+            from pymilvus import MilvusClient
+
+            if not os.path.exists(config.docs_path):
+                return f"❌ Documentation path not found: {config.docs_path}"
+
+            # Get the retriever configuration to access Milvus settings
+            retriever = await builder.get_retriever_config(config.retriever_name)
+
+            # Ensure we are working with a Milvus retriever configuration
+            try:
+                from aiq.retriever.milvus.register import MilvusRetrieverConfig  # type: ignore
+            except Exception:
+                MilvusRetrieverConfig = None  # type: ignore
+
+            if MilvusRetrieverConfig is None or not isinstance(retriever,
+                                                               MilvusRetrieverConfig):  # type: ignore[arg-type]
+                return "❌ Document ingestion currently supports only Milvus retrievers"
+
+            embedder = await builder.get_embedder(retriever.embedding_model,
+                                                  wrapper_type=LLMFrameworkEnum.LANGCHAIN)  # type: ignore[attr-defined]
+
+            # Connect to Milvus
+            client = MilvusClient(uri=str(retriever.uri))  # type: ignore[attr-defined]
+            collection_name = retriever.collection_name  # type: ignore[attr-defined]
+
+            if not collection_name:
+                return "❌ Milvus retriever must specify a non-empty collection_name"
+            assert isinstance(collection_name, str)
+
+            # Check if collection exists and has data
+            if collection_name in client.list_collections():
+                try:
+                    try:
+                        stats = client.get_collection_stats(
+                            collection_name=collection_name)  # type: ignore[attr-defined]
+                        doc_count = int(stats.get("row_count", 0)) if isinstance(stats, dict) else 0
+                    except Exception:
+                        # Fallback best-effort (API differences)
+                        stats = client.query(collection_name=collection_name,
+                                             expr="",
+                                             output_fields=["count(*)"],
+                                             limit=1)  # type: ignore[attr-defined]
+                        doc_count = stats[0].get("count(*)", 0) if stats else 0
+                except Exception:
+                    doc_count = 0
+
+                if doc_count > 0 and not config.force_reindex:
+                    return (f"✅ Collection '{collection_name}' already contains {doc_count} documents. "
+                            "Use force_reindex=true to reprocess.")
+
+                if config.force_reindex:
+                    client.drop_collection(collection_name)
+
+            # Load documents with PDF support
+            docs_path_obj = Path(config.docs_path)
+
+            # Use SimpleDirectoryReader for PDF support without LlamaParse
+            try:
+                reader = SimpleDirectoryReader(input_dir=str(docs_path_obj),
+                                               required_exts=[".pdf", ".md", ".txt", ".yaml", ".yml"],
+                                               recursive=True)
+                documents = reader.load_data()
+
+                if not documents:
+                    return f"❌ No supported documents found in {config.docs_path}"
+
+                # Chunk the documents
+                splitter = SentenceSplitter(chunk_size=config.chunk_size, chunk_overlap=config.chunk_overlap)
+                nodes = splitter.get_nodes_from_documents(documents)
+
+                # Prepare data for Milvus (skip empty chunks)
+                texts = []
+                metadatas = []
+
+                for node in nodes:
+                    content = (node.get_content() or "").strip()
+                    if not content:
+                        continue
+                    texts.append(content)
+                    metadata = (node.metadata or {}).copy()
+                    metadata.update({"node_id": getattr(node, "node_id", ""), "chunk_size": len(content)})
+                    metadatas.append(metadata)
+
+                if not texts:
+                    return ("❌ No non-empty text chunks were produced from documents. "
+                            "Verify files under docs_path and chunking parameters.")
+
+                # Create embeddings
+                try:
+                    embeddings = await embedder.aembed_documents(texts)
+                except Exception as e:  # noqa: BLE001
+                    return f"❌ Embedding error: {str(e)}"
+
+                # Create collection if it doesn't exist
+                if collection_name not in client.list_collections():
+                    # Create collection with schema
+                    fields = [
+                        FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
+                        FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=len(embeddings[0])),
+                        FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
+                        FieldSchema(name="source", dtype=DataType.VARCHAR, max_length=1000),
+                        FieldSchema(name="file_name", dtype=DataType.VARCHAR, max_length=500),
+                    ]
+
+                    schema = CollectionSchema(fields, description=f"Documents for {collection_name}")
+                    client.create_collection(collection_name=collection_name, schema=schema)
+
+                    # Create index using IndexParams if available
+                    try:
+                        idx_params = client.prepare_index_params()  # type: ignore[attr-defined]
+                        idx_params.add_index(
+                            field_name="vector",
+                            index_type="IVF_FLAT",
+                            metric_type="L2",
+                            params={"nlist": 128},
+                        )
+                        client.create_index(collection_name=collection_name,
+                                            index_params=idx_params)  # type: ignore[arg-type]
+                    except Exception:
+                        index_params = {
+                            "field_name": "vector",
+                            "index_type": "IVF_FLAT",
+                            "metric_type": "L2",
+                            "params": {
+                                "nlist": 128
+                            },
+                        }
+                        try:
+                            client.create_index(collection_name, index_params)  # type: ignore[arg-type]
+                        except Exception as e:  # noqa: BLE001
+                            return f"❌ Index creation error: {str(e)}"
+
+                # Insert data
+                entities = []
+                for text, embedding, metadata in zip(texts, embeddings, metadatas):
+                    entities.append({
+                        "vector": embedding,
+                        "text": text,
+                        "source": metadata.get("source", "unknown"),
+                        "file_name": metadata.get("file_name", "unknown"),
+                    })
+
+                client.insert(collection_name=collection_name, data=entities)
+
+                return (f"✅ Successfully ingested {len(entities)} chunks from {len(documents)} documents "
+                        f"into '{collection_name}'")
+
+            except Exception as e:
+                return f"❌ Error during document ingestion: {str(e)}"
+
+        except Exception as e:
+            return f"❌ Ingestion error: {str(e)}"
+
+    yield FunctionInfo.from_fn(_ingest_docs, description="Ingest DGX documentation into vector store")
+
+
+print("✅ DGX Document Ingestion tool registered successfully")
 
 # ========================
 # DGX Node Assessment Tool
@@ -371,8 +558,6 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     from langgraph.graph import StateGraph
 
     # Acquire handles lazily so registration order doesn't matter
-    reasoning_llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
-
     # Optional tools used directly by the orchestrator
     try:
         node_assess = builder.get_function("node_assessment_tool")
@@ -455,9 +640,6 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         Adds deterministic keyword overrides to ensure reset requests are labeled correctly.
         """
         import json as _json
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         # Assessment / summary from node_reader
         reader_out = ""
@@ -468,10 +650,12 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                 reader_out = ""
 
         # === PASS 1: Initial classification with a neutral query ===
+        # Lazily acquire the LLM to avoid build-time dependency on LANGCHAIN wrappers
+        local_reasoning_llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
         chain_initial = ({
             "request": RunnablePassthrough(),
             "assessment": lambda _: reader_out or state.get("assessment", ""),
-        } | decide_prompt | reasoning_llm | StrOutputParser())
+        } | decide_prompt | local_reasoning_llm | StrOutputParser())
 
         try:
             decision_json = await chain_initial.ainvoke(state.get("input", ""))
@@ -564,8 +748,18 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         dgx_guidance = ""
         if action_type in ("generate_bcm_commands", "reset_nodes") and dgx_rag:
             try:
-                dgx_guidance = await dgx_rag.ainvoke(
-                    "DGX node reset prerequisites and best practices for H100-based SuperPOD.")
+                # aiq_retriever returns structured RetrieverOutput; provide a concrete query
+                guidance_output = await dgx_rag.ainvoke(
+                    {"query": "DGX SuperPOD reset prerequisites and best practices"})
+                # Convert to plain text context (tool returns list of results)
+                try:
+                    results = guidance_output.get("results", guidance_output)  # handle dict or list
+                except Exception:
+                    results = guidance_output
+                if isinstance(results, list):
+                    dgx_guidance = "\n".join([str(r) for r in results][:10])
+                else:
+                    dgx_guidance = str(results)
             except Exception:
                 dgx_guidance = ""
 
@@ -638,12 +832,29 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         context = ("ASSESSMENT:\n" + (state.get("assessment", "") or "") + "\n\n" + "REACT_AGENT_PLAN:\n" +
                    (state.get("react_agent_output", "") or ""))
         try:
-            chain_for_cmds = commands_prompt | reasoning_llm | StrOutputParser()
+            local_reasoning_llm = await builder.get_llm(config.reasoning_llm_name,
+                                                        wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+            chain_for_cmds = commands_prompt | local_reasoning_llm | StrOutputParser()
             bcm_query = await chain_for_cmds.ainvoke({"context": context})
         except Exception:
             bcm_query = f"CONTEXT:\n{context}"
         try:
-            commands_text = await bcm_rag.ainvoke(bcm_query)
+            # Use retriever as a retriever: first retrieve BCM guidance, then let LLM synthesize commands
+            bcm_results = await bcm_rag.ainvoke({"query": bcm_query})
+            # Flatten retrieved text for synthesis
+            try:
+                results = bcm_results.get("results", bcm_results)
+            except Exception:
+                results = bcm_results
+            if isinstance(results, list):
+                retrieved_context = "\n".join([str(r) for r in results][:20])
+            else:
+                retrieved_context = str(results)
+            # Final command synthesis with reasoning LLM
+            local_reasoning_llm = await builder.get_llm(config.reasoning_llm_name,
+                                                        wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+            final_chain = commands_prompt | local_reasoning_llm | StrOutputParser()
+            commands_text = await final_chain.ainvoke({"context": context + "\n\nRETRIEVED:\n" + retrieved_context})
         except Exception as e:  # noqa: BLE001
             commands_text = f"❌ Command generation error: {str(e)}"
         return {**state, "bcm_commands": commands_text}

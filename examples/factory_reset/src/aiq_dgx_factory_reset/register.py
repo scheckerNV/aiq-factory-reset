@@ -14,6 +14,7 @@ import yaml
 from pydantic import Field
 
 from aiq.builder.builder import Builder
+from aiq.builder.framework_enum import LLMFrameworkEnum
 from aiq.builder.function_info import FunctionInfo
 from aiq.cli.register_workflow import register_function
 from aiq.data_models.function import FunctionBaseConfig
@@ -21,10 +22,15 @@ from aiq.data_models.function import FunctionBaseConfig
 logger = logging.getLogger(__name__)
 
 # ========================
-# BCM Documentation RAG Tool
+# BCM Documentation RAG Tool (DEPRECATED - now using aiq_retriever)
 # ========================
 
-
+# NOTE: This function has been replaced by AIQ's aiq_retriever
+# The functionality is now provided through the config:
+#   bcm_documentation_rag:
+#     _type: aiq_retriever
+#     retriever: bcm_retriever
+"""
 class BCMDocumentationRAGConfig(FunctionBaseConfig, name="bcm_documentation_rag"):
     docs_path: str = Field(default="examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert",
                            description="Path to BCM documentation directory")
@@ -38,12 +44,10 @@ class BCMDocumentationRAGConfig(FunctionBaseConfig, name="bcm_documentation_rag"
 
 @register_function(config_type=BCMDocumentationRAGConfig)
 async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Builder):
-    """
-    Search BCM documentation using accurate RAG retrieval
-    """
+    # Search BCM documentation using accurate RAG retrieval
 
     async def _search_bcm_docs(query: str) -> str:
-        """Search BCM documentation with high-accuracy retrieval"""
+        # Search BCM documentation with high-accuracy retrieval
         docs_path = config.docs_path
         persist_dir = config.persist_dir
 
@@ -63,7 +67,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             # from llama_parse import LlamaParse  # Not currently used
             # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
-            llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
 
             if not nvidia_api_key:
                 return ("❌ NVIDIA API key not provided. Set NVIDIA_API_KEY "
@@ -74,7 +77,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                         "environment variable or provide in config.")
 
             os.environ["NVIDIA_API_KEY"] = nvidia_api_key
-            os.environ["LLAMA_CLOUD_API_KEY"] = llama_api_key
 
             # Configure LlamaIndex with NVIDIA models for accuracy
             Settings.llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
@@ -210,9 +212,191 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                                description=("STEP 2: Generate BCM (Bright Cluster Manager) commands based on "
                                             "networking requirements from Step 1. Use ONLY after consulting "
                                             "networking_expert first."))
+"""
+
+# print("✅ BCM Documentation RAG function registered successfully")
+
+# ========================
+# Document Ingestion Tools
+# ========================
 
 
-print("✅ BCM Documentation RAG function registered successfully")
+class DocumentIngestConfig(FunctionBaseConfig, name="bcm_document_ingest"):
+    """Ingest documents into a vector store using AIQ retrievers"""
+    docs_path: str = Field(description="Path to documentation directory")
+    retriever_name: str = Field(description="Name of the retriever to populate")
+    chunk_size: int = Field(default=1024, description="Size of text chunks")
+    chunk_overlap: int = Field(default=200, description="Overlap between chunks")
+    force_reindex: bool = Field(default=False, description="Force reindexing even if collection exists")
+
+
+@register_function(config_type=DocumentIngestConfig)
+async def bcm_document_ingest(config: DocumentIngestConfig, builder: Builder):
+    """Ingest BCM documentation with PDF support (no LlamaParse needed)"""
+
+    async def _ingest_docs(input_text: str) -> str:
+        try:
+            from llama_index.core import SimpleDirectoryReader
+            from llama_index.core.node_parser import SentenceSplitter
+            from pymilvus import CollectionSchema
+            from pymilvus import DataType
+            from pymilvus import FieldSchema
+            from pymilvus import MilvusClient
+
+            if not os.path.exists(config.docs_path):
+                return f"❌ Documentation path not found: {config.docs_path}"
+
+            # Get the retriever configuration to access Milvus settings
+            retriever = await builder.get_retriever_config(config.retriever_name)
+
+            # Ensure we are working with a Milvus retriever configuration
+            try:
+                from aiq.retriever.milvus.register import MilvusRetrieverConfig  # type: ignore
+            except Exception:
+                MilvusRetrieverConfig = None  # type: ignore
+
+            if MilvusRetrieverConfig is None or not isinstance(retriever,
+                                                               MilvusRetrieverConfig):  # type: ignore[arg-type]
+                return "❌ Document ingestion currently supports only Milvus retrievers"
+
+            embedder = await builder.get_embedder(retriever.embedding_model,
+                                                  wrapper_type=LLMFrameworkEnum.LANGCHAIN)  # type: ignore[attr-defined]
+
+            # Connect to Milvus
+            client = MilvusClient(uri=str(retriever.uri))  # type: ignore[attr-defined]
+            collection_name = retriever.collection_name  # type: ignore[attr-defined]
+
+            if not collection_name:
+                return "❌ Milvus retriever must specify a non-empty collection_name"
+            assert isinstance(collection_name, str)
+
+            # Check if collection exists and has data
+            if collection_name in client.list_collections():
+                try:
+                    try:
+                        stats = client.get_collection_stats(
+                            collection_name=collection_name)  # type: ignore[attr-defined]
+                        doc_count = int(stats.get("row_count", 0)) if isinstance(stats, dict) else 0
+                    except Exception:
+                        stats = client.query(collection_name=collection_name,
+                                             expr="",
+                                             output_fields=["count(*)"],
+                                             limit=1)  # type: ignore[attr-defined]
+                        doc_count = stats[0].get("count(*)", 0) if stats else 0
+                except Exception:
+                    doc_count = 0
+
+                if doc_count > 0 and not config.force_reindex:
+                    return (f"✅ Collection '{collection_name}' already contains {doc_count} documents. "
+                            "Use force_reindex=true to reprocess.")
+
+                if config.force_reindex:
+                    client.drop_collection(collection_name)
+
+            # Load documents with PDF support
+            docs_path_obj = Path(config.docs_path)
+
+            # Use SimpleDirectoryReader for PDF support without LlamaParse
+            try:
+                reader = SimpleDirectoryReader(input_dir=str(docs_path_obj),
+                                               required_exts=[".pdf", ".md", ".txt", ".yaml", ".yml"],
+                                               recursive=True)
+                documents = reader.load_data()
+
+                if not documents:
+                    return f"❌ No supported documents found in {config.docs_path}"
+
+                # Chunk the documents
+                splitter = SentenceSplitter(chunk_size=config.chunk_size, chunk_overlap=config.chunk_overlap)
+                nodes = splitter.get_nodes_from_documents(documents)
+
+                # Prepare data for Milvus (skip empty chunks)
+                texts = []
+                metadatas = []
+
+                for node in nodes:
+                    content = (node.get_content() or "").strip()
+                    if not content:
+                        continue
+                    texts.append(content)
+                    metadata = (node.metadata or {}).copy()
+                    metadata.update({"node_id": getattr(node, "node_id", ""), "chunk_size": len(content)})
+                    metadatas.append(metadata)
+
+                if not texts:
+                    return ("❌ No non-empty text chunks were produced from documents. "
+                            "Verify files under docs_path and chunking parameters.")
+
+                # Create embeddings
+                try:
+                    embeddings = await embedder.aembed_documents(texts)
+                except Exception as e:  # noqa: BLE001
+                    return f"❌ Embedding error: {str(e)}"
+
+                # Create collection if it doesn't exist
+                if collection_name not in client.list_collections():
+                    # Create collection with schema
+                    fields = [
+                        FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
+                        FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=len(embeddings[0])),
+                        FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
+                        FieldSchema(name="source", dtype=DataType.VARCHAR, max_length=1000),
+                        FieldSchema(name="file_name", dtype=DataType.VARCHAR, max_length=500),
+                    ]
+
+                    schema = CollectionSchema(fields, description=f"Documents for {collection_name}")
+                    client.create_collection(collection_name=collection_name, schema=schema)
+
+                    # Create index using IndexParams if available
+                    try:
+                        idx_params = client.prepare_index_params()  # type: ignore[attr-defined]
+                        idx_params.add_index(
+                            field_name="vector",
+                            index_type="IVF_FLAT",
+                            metric_type="L2",
+                            params={"nlist": 128},
+                        )
+                        client.create_index(collection_name=collection_name,
+                                            index_params=idx_params)  # type: ignore[arg-type]
+                    except Exception:
+                        index_params = {
+                            "field_name": "vector",
+                            "index_type": "IVF_FLAT",
+                            "metric_type": "L2",
+                            "params": {
+                                "nlist": 128
+                            },
+                        }
+                        try:
+                            client.create_index(collection_name, index_params)  # type: ignore[arg-type]
+                        except Exception as e:  # noqa: BLE001
+                            return f"❌ Index creation error: {str(e)}"
+
+                # Insert data
+                entities = []
+                for text, embedding, metadata in zip(texts, embeddings, metadatas):
+                    entities.append({
+                        "vector": embedding,
+                        "text": text,
+                        "source": metadata.get("source", "unknown"),
+                        "file_name": metadata.get("file_name", "unknown"),
+                    })
+
+                client.insert(collection_name=collection_name, data=entities)
+
+                return (f"✅ Successfully ingested {len(entities)} chunks from {len(documents)} documents "
+                        f"into '{collection_name}'")
+
+            except Exception as e:
+                return f"❌ Error during document ingestion: {str(e)}"
+
+        except Exception as e:
+            return f"❌ Ingestion error: {str(e)}"
+
+    yield FunctionInfo.from_fn(_ingest_docs, description="Ingest BCM documentation into vector store")
+
+
+print("✅ BCM Document Ingestion tool registered successfully")
 
 # ========================
 # Generic Documentation RAG Tool
@@ -246,7 +430,7 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
 
         try:
             # Import LlamaIndex dependencies
-            import yaml
+            import yaml as _yaml  # type: ignore[import-not-found]
             from llama_index.core import Document
             from llama_index.core import Settings
             from llama_index.core import StorageContext
@@ -258,7 +442,6 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
             # from llama_parse import LlamaParse  # Not currently used
             # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
-            llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
 
             if not nvidia_api_key:
                 return ("❌ NVIDIA API key not provided. Set NVIDIA_API_KEY "
@@ -312,7 +495,7 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
                 #             except Exception as e:
                 #                 logger.warning("Failed to parse %s: %s", pdf_file, e)
 
-                pdf_files = list(docs_path_obj.glob("*.pdf"))
+                # pdf_files = list(docs_path_obj.glob("*.pdf"))
                 # if pdf_files:
                 #     logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
                 #     # new code
@@ -349,7 +532,7 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
 
                             # Also parse as YAML to extract structured info for metadata
                             try:
-                                yaml_data = yaml.safe_load(content)
+                                yaml_data = _yaml.safe_load(content)
                                 metadata = {"source": str(yaml_file), "file_name": yaml_file.name, "file_type": "yaml"}
                                 # Add some structured metadata if available
                                 if isinstance(yaml_data, dict):
@@ -491,7 +674,7 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
 
         try:
             # Import LlamaIndex dependencies
-            import yaml
+            import yaml as _yaml  # type: ignore[import-not-found]
             from llama_index.core import Document
             from llama_index.core import Settings
             from llama_index.core import StorageContext
@@ -587,7 +770,7 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
 
                             # Parse YAML for metadata
                             try:
-                                yaml_data = yaml.safe_load(content)
+                                yaml_data = _yaml.safe_load(content)
                                 metadata = {"source": str(yaml_file), "file_name": yaml_file.name, "file_type": "yaml"}
                                 if isinstance(yaml_data, dict):
                                     if "metadata" in yaml_data:
@@ -692,7 +875,7 @@ class NetworkAssessmentToolConfig(FunctionBaseConfig, name="network_assessment_t
 async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder: Builder):
     """Comprehensive network assessment tool for BCM clusters"""
 
-    async def _run_network_assessment(input_message: str) -> str:
+    async def _run_network_assessment(_input_message: str) -> str:
         """Execute comprehensive network assessment"""
         import asyncio
         import tempfile
@@ -828,7 +1011,7 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                                                                   stdout=asyncio.subprocess.PIPE,
                                                                   stderr=asyncio.subprocess.PIPE)
 
-            latest_stdout, latest_stderr = await latest_process.communicate()
+            latest_stdout, _ = await latest_process.communicate()
 
             if latest_process.returncode == 0 and latest_stdout.strip():
                 latest_dir = latest_stdout.decode('utf-8').strip()
@@ -845,7 +1028,7 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                                                                    stdout=asyncio.subprocess.PIPE,
                                                                    stderr=asyncio.subprocess.PIPE)
 
-                    stdout, stderr = await process.communicate()
+                    stdout, _ = await process.communicate()
 
                     if process.returncode == 0:
                         content = stdout.decode('utf-8')
@@ -907,7 +1090,7 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
 
             logger.info(f"📋 Reading network config from: {config_file}")
 
-            with open(config_file, 'r') as f:
+            with open(config_file, 'r', encoding='utf-8') as f:
                 config_data = yaml.safe_load(f)
 
             facts = []
@@ -1010,7 +1193,7 @@ async def simple_network_orchestrator(config: SimpleNetworkOrchestratorConfig, b
         # Step 1: Run network assessment
         logger.info("Step 1: Running network assessment")
         assess_tool = builder.get_function("network_assessment_tool")
-        assess_result = await assess_tool.ainvoke("Run comprehensive network assessment")
+        await assess_tool.ainvoke("Run comprehensive network assessment")
         logger.info("✅ Assessment completed")
 
         # Step 2: Read full assessment data (let the reader handle all the complexity)
@@ -1057,7 +1240,10 @@ print("✅ Simple Network Orchestrator registered successfully")
 
 # class NetworkWorkflowOrchestratorConfig(FunctionBaseConfig, name="network_workflow_orchestrator"):
 #     max_retries: int = Field(default=1, description="Maximum retry attempts")  # Reduced from 3 to 1
-#     quality_threshold: float = Field(default=0.3, description="Minimum quality score for commands")  # Lowered threshold
+#     quality_threshold: float = Field(
+#         default=0.3,
+#         description="Minimum quality score for commands"
+#     )  # Lowered threshold
 
 # @register_function(config_type=NetworkWorkflowOrchestratorConfig)
 # async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfig, builder: Builder):
@@ -1127,12 +1313,15 @@ print("✅ Simple Network Orchestrator registered successfully")
 #         """Use your existing BCM RAG tool"""
 #         bcm_rag_tool = builder.get_function("bcm_documentation_rag")
 #         task = extract_user_input(state["input"])
-#         context = ("Assessment Summary:\n" + (state.get('assessment_data', '') or '').strip() + "\n\n" +
-#                    "Analysis Summary:\n" + (state.get('analysis_data', '') or '').strip() + "\n\n" +
-#                    "Research Summary:\n" + (state.get('research_data', '') or '').strip() + "\n\n" + "Instruction:\n" +
-#                    f"Generate the EXACT Bright Cluster Manager commands, using cmsh -c, for task: {task}.\n" +
-#                    "Revert the cluster networking to a known good state.\n" + "Requirements:\n" +
-#                    "- Output ONLY commands, one per line, no explanations.\n" +
+#         context = (
+#             "Assessment Summary:\n" + (state.get('assessment_data', '') or '').strip() + "\n\n" +
+#             "Analysis Summary:\n" + (state.get('analysis_data', '') or '').strip() + "\n\n" +
+#             "Research Summary:\n" + (state.get('research_data', '') or '').strip() + "\n\n" +
+#             "Instruction:\n" +
+#             f"Generate the EXACT Bright Cluster Manager commands, using cmsh -c, for task: {task}.\n" +
+#             "Revert the cluster networking to a known good state.\n" +
+#             "Requirements:\n" +
+#             "- Output ONLY commands, one per line, no explanations.\n" +
 #                    "- Each line MUST start with: cmsh -c \"\n" +
 #                    "- Include necessary device/network/category contexts and commit where required.\n")
 #         result = await bcm_rag_tool.ainvoke(context)
