@@ -803,7 +803,7 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                 files_to_read = ["10_switch_*", "11_switch_*", "12_switch_*"]
             elif "network" in query.lower():
                 files_to_read = ["03_networks.txt", "04_interfaces.txt"]
-            elif "full" in query.lower() or "all" in query.lower():
+            elif "full" or "all" in query.lower() or "all" in query.lower():
                 # Return combined assessment data for orchestrator
                 files_to_read = [
                     "00_SUMMARY.txt",
