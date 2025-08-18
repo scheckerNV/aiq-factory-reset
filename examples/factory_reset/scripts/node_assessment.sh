@@ -18,9 +18,9 @@ run_cmd() {
     echo "Timestamp: $(date)"
     echo "====================================="
     echo
-    eval "$cmd" || echo "Command failed with exit code $?"
+    eval "$cmd" 2>&1 || echo "Command failed with exit code $?"
     echo
-  } > "$OUTPUT_DIR/$output_file" 2>&1
+  } > "$OUTPUT_DIR/$output_file"
 }
 
 # 1) Basic node information
@@ -28,7 +28,8 @@ run_cmd 'cmsh -c "device status"' \
         "01_device_status.txt" \
         "Overall device status"
 
-run_cmd 'cmsh -c "device list -f name,status,mac,ip,category,softwareimage"' \
+# Use proper formatting for the device list command
+run_cmd 'cmsh -t -c "device list -f hostname,status,mac,ip,category,softwareimage"' \
         "02_device_list.txt" \
         "Detailed device information"
 
@@ -50,13 +51,14 @@ run_cmd 'cmsh -c "device hardwareprofile list"' \
         "19_hardware_profiles.txt" \
         "Hardware profiles in the cluster"
 
-# 4) Node OS versions - more reliable approach
-run_cmd 'cmsh -c "device foreach * (cat /etc/os-release | grep ^VERSION)"' \
+# 4) Node OS versions - using a more reliable approach
+# Use foreach with specific node type instead of wildcard
+run_cmd 'cmsh -c "device foreach -t physicalnode (cat /etc/os-release | grep ^VERSION)"' \
         "20_os_versions.txt" \
-        "OS versions across nodes"
+        "OS versions across physical nodes"
 
 # 5) BIOS information
-run_cmd 'cmsh -c "device foreach * (dmidecode -s bios-version)"' \
+run_cmd 'cmsh -c "device foreach -t physicalnode (dmidecode -s bios-version)"' \
         "21_bios_versions.txt" \
         "BIOS versions across nodes"
 
@@ -65,13 +67,19 @@ run_cmd 'cmsh -c "device firmware info"' \
         "22_firmware_info.txt" \
         "Available firmware files"
 
-# 7) BIOS settings status for a single node (modify as needed)
-run_cmd 'cmsh -c "device use node001; biossettings; status"' \
+# 7) BIOS settings status - first check if model is set
+# Split into two commands - first check if the BIOS model is defined
+run_cmd 'cmsh -c "device use node001; biossettings; get model"' \
+        "23a_bios_model_check.txt" \
+        "Check BIOS model for node001"
+
+# Then try getting the settings status, with error handling
+run_cmd 'cmsh -c "device use node001; biossettings; status 2>/dev/null || echo \"BIOS settings not available or model not defined\""' \
         "23_sample_bios_settings.txt" \
         "Sample BIOS settings for node001"
 
-# 8) BMC status check using ipmitool (if available)
-run_cmd 'cmsh -c "device foreach * (ipmitool mc info 2>/dev/null || echo \"BMC not accessible on this node\")"' \
+# 8) BMC status check using ipmitool
+run_cmd 'cmsh -c "device foreach -t physicalnode (ipmitool mc info 2>/dev/null || echo \"BMC not accessible on this node\")"' \
         "24_bmc_info.txt" \
         "BMC information where accessible"
 
@@ -80,12 +88,17 @@ run_cmd 'cmsh -c "device overview"' \
         "25_device_overview.txt" \
         "Cluster health overview"
 
-# 10) Check for burn configurations that can test hardware
-run_cmd 'cmsh -c "partition use base; burnconfigs; list"' \
+# 10) Check for burn configurations
+run_cmd 'cmsh -c "partition use base; burnconfigs list 2>/dev/null || echo \"No burn configs available\""' \
         "26_burn_configs.txt" \
         "Available hardware burn configurations"
 
-# 11) Summary
+# 11) Try using sysinfo for detailed hardware info for one node
+run_cmd 'cmsh -c "device use node001; sysinfo"' \
+        "27_sysinfo_node001.txt" \
+        "Detailed system info for node001"
+
+# 12) Summary
 {
   echo "BCM Node Assessment Summary"
   echo "============================"
@@ -93,11 +106,11 @@ run_cmd 'cmsh -c "partition use base; burnconfigs; list"' \
   echo "Output Directory: $OUTPUT_DIR"
   echo
   echo "Files Generated:"
-  ls -la "$OUTPUT_DIR"/*.txt | awk '{print $9, $5}' | sed 's|.*/||'
+  ls -la "$OUTPUT_DIR/"*.txt | awk '{print $9, "("$5" bytes)"}' | sed 's|.*/||'
 } > "$OUTPUT_DIR/00_SUMMARY.txt"
 
 # Create symlink for easy access by the results reader
 ln -sfn "$OUTPUT_DIR" /tmp/node_assessment_latest 2>/dev/null || true
 
 echo "Assessment complete! Results saved to: $OUTPUT_DIR"
-echo "$OUTPUT_DIR"
+echo "Summary file: $OUTPUT_DIR/00_SUMMARY.txt"
