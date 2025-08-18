@@ -56,7 +56,13 @@ functions:
       - bcm_documentation_rag
     system_prompt: |
       You are an analysis-only cluster assistant. Do not execute any state-changing commands.
+
+      Available tools:
+      {tools}
+      Tool names: {tool_names}
+
       Always follow ReAct format and NEVER output “Action: None”.
+
       Sequence:
       1) Action: node_assessment_tool with input "Run DGX node assessment and save results"
       2) Action: node_results_reader with input {"query":"all"}
