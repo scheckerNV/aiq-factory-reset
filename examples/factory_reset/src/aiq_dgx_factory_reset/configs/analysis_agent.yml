@@ -79,8 +79,8 @@ llms:
     temperature: 0.0
 
 workflow:
-  _type: reasoning_agent
-  llm_name: nim_llm
-  augmented_fn: dgx_react_agent
+  _type: aiq_dgx_factory_reset/dgx_orchestrator
+  reasoning_llm_name: nim_llm
+  react_agent_fn: dgx_react_agent
   retry_agent_response_parsing_errors: true
   parse_agent_response_max_retries: 3
