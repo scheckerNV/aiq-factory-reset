@@ -32,27 +32,31 @@ services:
         timeout: 20s
         retries: 3
 
-  milvus:
+  milvus-standalone:
     container_name: milvus-standalone
-    image: milvusdb/milvus:v2.3.1
-    command: ["milvus", "run", "standalone"]
+    image: milvusdb/milvus:v2.5.4
+    command: [ 'milvus', 'run', 'standalone' ]
     environment:
-      ETCD_ENDPOINTS: etcd:2379
-      MINIO_ADDRESS: minio:9000
+      ETCD_ENDPOINTS: ${ETCD_ENDPOINTS:-etcd:2379}
+      MINIO_ADDRESS: ${MINIO_ADDRESS:-minio:9000}
+      common.security.authorizationEnabled: false
     volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
+      - ./.volumes/milvus/milvus:/var/lib/milvus
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      test: [ 'CMD', 'curl', '-f', 'http://localhost:9091/healthz' ]
       interval: 30s
       start_period: 90s
       timeout: 20s
       retries: 3
+    depends_on:
+      - etcd
+      - minio
     ports:
       - "19530:19530"
       - "9091:9091"
-    depends_on:
-      - "etcd"
-      - "minio"
+    networks:
+      - default
+
 
   etcd:
     container_name: milvus-etcd
@@ -100,4 +104,3 @@ services:
 networks:
   default:
     name: nvidia-rag-test
-

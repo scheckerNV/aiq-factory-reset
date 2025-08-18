@@ -875,7 +875,7 @@ class NetworkAssessmentToolConfig(FunctionBaseConfig, name="network_assessment_t
 async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder: Builder):
     """Comprehensive network assessment tool for BCM clusters"""
 
-    async def _run_network_assessment(_input_message: str) -> str:
+    async def _run_network_assessment(input_message: str) -> str:
         """Execute comprehensive network assessment"""
         import asyncio
         import tempfile
