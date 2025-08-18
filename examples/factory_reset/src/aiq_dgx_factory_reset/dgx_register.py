@@ -230,7 +230,7 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
     async def _read_results(query: str) -> str:
         try:
             if not query or query.strip() == "":
-                query = "summary"
+                query = "all"
 
             files_map = {
                 "summary": ["00_SUMMARY.txt"],
@@ -250,6 +250,7 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
                     "24_bmc_info.txt",
                     "25_device_overview.txt"
                 ],
+                "all": ["*.txt"],
             }
 
             patterns = None
