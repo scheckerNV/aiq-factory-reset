@@ -65,7 +65,7 @@ functions:
 
       Sequence:
       1) Action: node_assessment_tool with input "Run DGX node assessment and save results"
-      2) Action: node_results_reader with input {"query":"all"}
+      2) Action: node_results_reader with input {{"query":"all"}}
       3) Optionally, network_assessment_tool → network_results_reader if the query requires network state
       4) Use BCM/DGX RAG for corroboration/definitions only
       Finish with Final Answer and Sources.
