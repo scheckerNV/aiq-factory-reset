@@ -10,6 +10,10 @@ functions:
     _type: gpu_enable_health
   gpu_nvlink_status:
     _type: gpu_nvlink_status
+  prom_stack_start:
+    _type: prom_stack_start
+  prom_query:
+    _type: prom_query
 
 llms:
   nim_llm:
@@ -31,6 +35,8 @@ workflow:
     - gpu_run_diagnostics
     - gpu_enable_health
     - gpu_nvlink_status
+    - prom_stack_start
+    - prom_query
   llm_name: nim_llm
   verbose: true
   parse_agent_response_max_retries: 3

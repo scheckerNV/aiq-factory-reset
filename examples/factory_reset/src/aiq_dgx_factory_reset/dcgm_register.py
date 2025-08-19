@@ -12,6 +12,8 @@ from typing import Dict
 from typing import List
 from typing import Optional
 
+import requests
+
 from aiq.builder.builder import Builder
 from aiq.builder.function_info import FunctionInfo
 from aiq.cli.register_workflow import register_function
@@ -20,6 +22,8 @@ from aiq.data_models.function import FunctionBaseConfig
 logger = logging.getLogger(__name__)
 
 GROUP_NAME = "GPU_ALL"  # dedicated DCGM group name for all GPUs
+PROM_URL = "http://localhost:9090"
+GRAFANA_URL = "http://localhost:3000"
 
 
 def run(cmd: str, timeout: Optional[int] = None) -> str:
@@ -84,6 +88,7 @@ def human_to_flags(s: str) -> str:
     return "".join(flags)
 
 
+# get health status of all GPUs
 def parse_health_report(txt: str) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
     current_gpu: Optional[str] = None
@@ -115,6 +120,7 @@ def _to_float(s: Any) -> Optional[float]:
         return None
 
 
+# run DCGM commands to collect metrics
 def collect_metrics() -> Dict[str, Any]:
     metrics: Dict[str, Any] = {}
 
@@ -433,5 +439,104 @@ async def gpu_nvlink_status(config: GPUNvlinkStatusToolConfig, builder: Builder)
 
 #     yield FunctionInfo.from_fn(
 #         _gpu_orchestrate,
-#         description="Orchestrate multiple DCGM steps in one call (enable health, wait, status, optional diag, NVLink).",
+#         description=(
+#             "Orchestrate multiple DCGM steps in one call (enable health, wait, "
+#             "status, optional diag, NVLink)."
+#         ),
 #     )
+
+
+class PromStackStartConfig(FunctionBaseConfig, name="prom_stack_start"):
+    pass
+
+
+@register_function(config_type=PromStackStartConfig)
+async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
+
+    async def _prom_stack_start(text: str) -> str:
+        try_run("docker rm -f dcgm-exporter")
+        try_run("docker rm -f prometheus")
+        try_run("docker rm -f grafana")
+
+        exp_out = try_run("docker run -d --restart unless-stopped --name dcgm-exporter --net=host "
+                          "nvcr.io/nvidia/k8s/dcgm-exporter:latest")
+
+        prom_cfg = ("global:\n"
+                    "  scrape_interval: 5s\n"
+                    "scrape_configs:\n"
+                    "  - job_name: 'dcgm'\n"
+                    "    static_configs:\n"
+                    "      - targets: ['localhost:9400']\n")
+        try:
+            with open("/tmp/prometheus.yml", "w") as f:
+                f.write(prom_cfg)
+        except Exception as e:
+            logger.error("Failed to write /tmp/prometheus.yml: %s", e)
+
+        prom_out = try_run("docker run -d --restart unless-stopped --name prometheus --net=host "
+                           "-v /tmp/prometheus.yml:/etc/prometheus/prometheus.yml "
+                           "prom/prometheus:latest --storage.tsdb.retention.time=15d")
+
+        graf_out = try_run(
+            "docker run -d --restart unless-stopped --name grafana --net=host grafana/grafana-oss:latest")
+
+        try:
+            p_status = str(requests.get(f"{PROM_URL}/-/ready", timeout=3).status_code)
+        except Exception:
+            p_status = "unreachable"
+        try:
+            g_status = str(requests.get(f"{GRAFANA_URL}/login", timeout=3).status_code)
+        except Exception:
+            g_status = "unreachable"
+
+        summary_lines = [
+            "Started monitoring stack:",
+            f"dcgm-exporter: http://localhost:9400/metrics ({exp_out[:12] if exp_out else ''})",
+            f"Prometheus: {PROM_URL} (ready={p_status}, id={prom_out[:12] if prom_out else ''})",
+            f"Grafana: {GRAFANA_URL} (login={g_status}, id={graf_out[:12] if graf_out else ''})",
+            "Grafana default login: admin/admin",
+        ]
+        return "\n".join(summary_lines)
+
+    yield FunctionInfo.from_fn(
+        _prom_stack_start,
+        description=(
+            "Start dcgm-exporter, Prometheus, and Grafana via Docker on this node and return service URLs/status."),
+    )
+
+
+class PromQueryConfig(FunctionBaseConfig, name="prom_query"):
+    pass
+
+
+@register_function(config_type=PromQueryConfig)
+async def prom_query(config: PromQueryConfig, builder: Builder):
+
+    async def _prom_query(text: str) -> str:
+        opts = parse_kv(text)
+        user_query = opts.get("query")
+
+        def run_query(query_str: str):
+            try:
+                resp = requests.get(f"{PROM_URL}/api/v1/query", params={"query": query_str}, timeout=5)
+                resp.raise_for_status()
+                return resp.json().get("data", {}).get("result", [])
+            except Exception as e:
+                return [{"error": str(e)}]
+
+        if user_query:
+            return json.dumps(run_query(user_query))
+
+        results = {
+            "temp_max_5m": run_query("max by (gpu) (max_over_time(nvidia_dcgm_gpu_temp_celsius[5m]))"),
+            "sm_util_avg_5m": run_query("avg by (gpu) (avg_over_time(nvidia_dcgm_sm_utilization[5m]))"),
+            "ecc_dbe_1h": run_query("increase(nvidia_dcgm_ecc_dbe_total[1h])"),
+            "xid_1h": run_query("increase(nvidia_dcgm_xid_errors_total[1h])"),
+        }
+        return json.dumps(results)
+
+    yield FunctionInfo.from_fn(
+        _prom_query,
+        description=(
+            "Query Prometheus for DCGM metrics. Optional: 'query=<promql>'. If omitted, returns default summaries."),
+    )
