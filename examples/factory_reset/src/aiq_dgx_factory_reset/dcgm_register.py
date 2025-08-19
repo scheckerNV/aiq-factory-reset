@@ -73,8 +73,19 @@ def ensure_all_group() -> str:
     return gid
 
 
-def parse_kv(text: str) -> Dict[str, str]:
+def parse_kv(text: Optional[str]) -> Dict[str, str]:
     out: Dict[str, str] = {}
+    for token in text.split():
+        if "=" in token:
+            k, v = token.split("=", 1)
+            out[k.strip().lower()] = v.strip()
+    return out
+
+
+def parse_kv(text: Optional[str]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    if not text:
+        return out
     for token in text.split():
         if "=" in token:
             k, v = token.split("=", 1)
@@ -154,7 +165,8 @@ async def gpu_status(config: GPUStatusToolConfig, builder: Builder):
 
     async def _gpu_status(text: str) -> str:
         opts = parse_kv(text)
-        output = opts.get("output", "json")
+        # Default to compact text to avoid oversized LLM observations
+        output = opts.get("output", "text")
 
         try:
             gid = ensure_all_group()
@@ -175,23 +187,28 @@ async def gpu_status(config: GPUStatusToolConfig, builder: Builder):
         for gpu in sorted(set(list(health.keys()) + list(metrics.keys())), key=lambda x: int(x)):
             data["gpus"][gpu] = {"health": health.get(gpu, {}), "metrics": metrics.get(gpu, {})}
 
+        # Build compact text by default
         if output == "text":
             lines = [f"GPUs: {summary['ok']} OK, {summary['warning']} Warning, {summary['critical']} Critical"]
             for g, info in data["gpus"].items():
-                h = info["health"].get("state", "Unknown")
+                h = info["health"].get("state", "Unknown") or "Unknown"
                 m = info["metrics"]
                 t = m.get("tempC")
                 p = m.get("powerW")
                 ug = m.get("util_gpu")
                 issues = "; ".join(info["health"].get("issues", [])) or "-"
                 lines.append(f"GPU {g}: {h} | temp {t}C | power {p}W | util {ug}% | issues: {issues}")
-            return "\n".join(lines)
+            txt = "\n".join(lines)
+            # hard cap to keep LLM happy
+            MAXLEN = 6000
+            return txt if len(txt) <= MAXLEN else (txt[:MAXLEN] + "\n...truncated...")
+        # JSON on demand only
         return json.dumps(data)
 
     yield FunctionInfo.from_fn(
         _gpu_status,
         description=("Summarize per-GPU health and usage on this node. "
-                     "Optional input: 'output=json' (default) or 'output=text'."),
+                     "Optional input: 'output=text' (default) or 'output=json'."),
     )
 
 
@@ -205,7 +222,8 @@ async def gpu_run_diagnostics(config: GPUDiagnosticsToolConfig, builder: Builder
     async def _gpu_run_diagnostics(text: str) -> str:
         opts = parse_kv(text)
         level = opts.get("level", "r2").lower()
-        output = opts.get("output", "json")
+        # Default to text; JSON can be huge on r3/r4
+        output = opts.get("output", "text")
         timeout = int(opts["timeout"]) if "timeout" in opts else None
 
         try:
@@ -219,6 +237,17 @@ async def gpu_run_diagnostics(config: GPUDiagnosticsToolConfig, builder: Builder
             cmd = f"dcgmi diag -g {gid} -r {level} -j"
 
         raw = try_run(cmd, timeout=timeout)
+        if output == "text":
+            # keep some context, but cap size
+            MAXLEN = 6000
+            if len(raw) <= MAXLEN:
+                return raw or "No diagnostic output."
+            # Try to preserve the summary tail if present
+            head = raw[:3000]
+            tail = raw[-2500:]
+            return head + "\n...truncated...\n" + tail
+
+        # JSON on demand, compact and capped
         json_obj = None
         for line in raw.splitlines():
             if line.strip().startswith("{"):
@@ -227,16 +256,14 @@ async def gpu_run_diagnostics(config: GPUDiagnosticsToolConfig, builder: Builder
                     break
                 except Exception:
                     pass
-
-        if output == "text":
-            return raw if raw else "No diagnostic output."
-        return json.dumps(json_obj if json_obj is not None else {"raw": raw})
+        payload = json.dumps(json_obj if json_obj is not None else {"raw": raw})
+        return payload[:120000]  # cap to ~120 KB
 
     yield FunctionInfo.from_fn(
         _gpu_run_diagnostics,
         description=(
             "Run DCGM diagnostics on this node. "
-            "Optional input: 'level=r1|r2|r3|r4|nvbandwidth' (default r2), 'output=json|text', 'timeout=SECONDS'."),
+            "Optional input: 'level=r1|r2|r3|r4|nvbandwidth' (default r2), 'output=text|json', 'timeout=SECONDS'."),
     )
 
 
