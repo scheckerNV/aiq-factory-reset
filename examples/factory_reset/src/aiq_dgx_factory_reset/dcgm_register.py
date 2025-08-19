@@ -39,38 +39,8 @@ def get_gpu_ids() -> List[str]:
 
 
 def ensure_all_group() -> str:
-    glist = try_run("dcgmi group -l")
-    # Parse all group blocks
-    blocks = re.findall(
-        r"\|\s*Group ID\s*\|\s*(\d+)\s*\|\s*\n\|\s*Group Name\s*\|\s*([^\|]+)\|",
-        glist,
-    )
-    for gid, name in blocks:
-        if name.strip() == GROUP_NAME:
-            return gid
-
-    # Create group
-    out = try_run(f"dcgmi group -c {GROUP_NAME}")
-    m = re.search(r"group ID of (\d+)", out)
-    gid = m.group(1) if m else None
-    if not gid:
-        glist = try_run("dcgmi group -l")
-        blocks = re.findall(
-            r"\|\s*Group ID\s*\|\s*(\d+)\s*\|\s*\n\|\s*Group Name\s*\|\s*([^\|]+)\|",
-            glist,
-        )
-        for _gid, name in blocks:
-            if name.strip() == GROUP_NAME:
-                gid = _gid
-                break
-    if not gid:
-        raise RuntimeError("Failed to create/find DCGM group")
-
-    # Add all GPUs
-    gpu_ids = get_gpu_ids()
-    if gpu_ids:
-        try_run(f"dcgmi group -g {gid} -a {','.join(gpu_ids)}")
-    return gid
+    # Prefer the system group with all supported GPUs
+    return "0"
 
 
 def parse_kv(text: Optional[str]) -> Dict[str, str]:
@@ -199,6 +169,11 @@ async def gpu_status(config: GPUStatusToolConfig, builder: Builder):
         health = parse_health_report(health_txt)
         metrics = collect_metrics()
 
+        # Check if health data is available
+        note = None
+        if not health:
+            note = "No health results yet. If you just enabled watches, wait ~60s and retry."
+
         summary = {
             "total": len(get_gpu_ids()),
             "critical": sum(1 for v in health.values() if v.get("state") == "Error"),
@@ -212,6 +187,8 @@ async def gpu_status(config: GPUStatusToolConfig, builder: Builder):
         # Build compact text by default
         if output == "text":
             lines = [f"GPUs: {summary['ok']} OK, {summary['warning']} Warning, {summary['critical']} Critical"]
+            if note:
+                lines.append(f"Note: {note}")
             for g, info in data["gpus"].items():
                 h = info["health"].get("state", "Unknown") or "Unknown"
                 m = info["metrics"]
@@ -298,17 +275,22 @@ async def gpu_enable_health(config: GPUHealthEnableToolConfig, builder: Builder)
 
     async def _gpu_enable_health(text: str) -> str:
         opts = parse_kv(text)
-        # Default to 'a' (all watches)
-        systems_input = opts.get("systems", "a")
+        systems_input = opts.get("systems", "a")  # default to all watches
         flags = human_to_flags(systems_input) or "a"
+        gid = ensure_all_group()
 
-        try:
-            gid = ensure_all_group()
-        except Exception as e:
-            return f"Failed to ensure DCGM group: {e}"
+        set_out = try_run(f"dcgmi health -g {gid} -s {flags}")
+        # Also fetch watch state to confirm and keep output non-empty/small
+        fetch_json = try_run(f"dcgmi health -g {gid} -f -j")
 
-        out = try_run(f"dcgmi health -g {gid} -s {flags}")
-        return out or f"Enabled health systems: {flags}"
+        msg = []
+        msg.append(set_out or f"Enabled health systems: {flags}")
+        if fetch_json and len(fetch_json) > 2000:
+            fetch_json = fetch_json[:2000] + "...truncated..."
+        if fetch_json:
+            msg.append(fetch_json)
+        msg.append("Note: watched systems with (*) need ~60 seconds before first check (-c) shows results.")
+        return "\n".join(msg)
 
     yield FunctionInfo.from_fn(
         _gpu_enable_health,
@@ -361,3 +343,95 @@ async def gpu_nvlink_status(config: GPUNvlinkStatusToolConfig, builder: Builder)
         _gpu_nvlink_status,
         description=("Show NVLink link status (U/D/X/_). Optional input: 'output=json' to return a parsed summary."),
     )
+
+
+# class GPUOrchestrateToolConfig(FunctionBaseConfig, name="gpu_orchestrate"):
+#     pass
+
+# @register_function(config_type=GPUOrchestrateToolConfig)
+# async def gpu_orchestrate(config: GPUOrchestrateToolConfig, builder: Builder):
+#     """
+#     Params (key=value): enable_health=true|false, wait_for_health=true|false,
+#     include_nvlink=true|false, diag=r1|r2|r3|r4|nvbandwidth|none,
+#     output=text|json, systems=a|p|m|i|t|n (default a)
+#     """
+#     import time
+
+#     async def _gpu_orchestrate(text: str) -> str:
+#         opts = parse_kv(text)
+#         enable_health = opts.get("enable_health", "false").lower() in ("true", "1", "yes", "y")
+#         wait_for_health = opts.get("wait_for_health", "false").lower() in ("true", "1", "yes", "y")
+#         include_nvlink = opts.get("include_nvlink", "false").lower() in ("true", "1", "yes", "y")
+#         diag_level = opts.get("diag", "").lower()
+#         output = opts.get("output", "text")
+#         systems_input = opts.get("systems", "a")
+#         flags = human_to_flags(systems_input) or "a"
+
+#         gid = ensure_all_group()
+#         notes = []
+
+#         if enable_health:
+#             notes.append(try_run(f"dcgmi health -g {gid} -s {flags}") or f"Enabled health: {flags}")
+#             if wait_for_health:
+#                 time.sleep(65)  # warm-up
+
+#         health_txt = try_run(f"dcgmi health -g {gid} -c")
+#         health = parse_health_report(health_txt)
+#         metrics = collect_metrics()
+
+#         diag_out = None
+#         if diag_level:
+#             if diag_level == "nvbandwidth":
+#                 diag_out = try_run("dcgmi diag -r nvbandwidth -p nvbandwidth.is_allowed=true -j", timeout=900)
+#             else:
+#                 diag_out = try_run(f"dcgmi diag -g {gid} -r {diag_level} -j", timeout=1800)
+#             if diag_out and len(diag_out) > 4000:
+#                 diag_out = diag_out[:4000] + "...truncated..."
+
+#         nvlink_raw = try_run("dcgmi nvlink --link-status") if include_nvlink else None
+
+#         summary = {
+#             "total": len(get_gpu_ids()),
+#             "critical": sum(1 for v in health.values() if v.get("state") == "Error"),
+#             "warning": sum(1 for v in health.values() if v.get("state") == "Warning"),
+#             "ok": sum(1 for v in health.values() if v.get("state") == "OK"),
+#         }
+#         data = {"summary": summary, "gpus": {}}
+#         for g in sorted(set(list(health.keys()) + list(metrics.keys())), key=lambda x: int(x)):
+#             data["gpus"][g] = {"health": health.get(g, {}), "metrics": metrics.get(g, {})}
+#         if diag_out:
+#             data["diag"] = diag_out
+#         if nvlink_raw:
+#             data["nvlink"] = nvlink_raw
+
+#         if output == "json":
+#             return json.dumps(data)
+
+#         lines = [f"GPUs: {summary['ok']} OK, {summary['warning']} Warning, {summary['critical']} Critical"]
+#         if not health:
+#             lines.append("Note: no health results yet. If watches were just enabled, allow ~60s.")
+#         for g, info in data["gpus"].items():
+#             h = info["health"].get("state", "Unknown") or "Unknown"
+#             m = info["metrics"]
+#             issues = '; '.join(info['health'].get('issues', [])) or '-'
+#             temp = m.get('tempC')
+#             power = m.get('powerW')
+#             util = m.get('util_gpu')
+#             lines.append(f"GPU {g}: {h} | temp {temp}C | power {power}W | util {util}% | issues: {issues}")
+#         if diag_out:
+#             lines.append("\nDiagnostics (raw/truncated):")
+#             lines.append(diag_out)
+#         if nvlink_raw:
+#             lines.append("\nNVLink Link Status:")
+#             lines.append(nvlink_raw)
+#         if notes:
+#             lines.append("\nNotes:")
+#             lines.extend(notes)
+
+#         txt = "\n".join(lines)
+#         return txt if len(txt) <= 6000 else (txt[:6000] + "\n...truncated...")
+
+#     yield FunctionInfo.from_fn(
+#         _gpu_orchestrate,
+#         description="Orchestrate multiple DCGM steps in one call (enable health, wait, status, optional diag, NVLink).",
+#     )
