@@ -75,15 +75,6 @@ def ensure_all_group() -> str:
 
 def parse_kv(text: Optional[str]) -> Dict[str, str]:
     out: Dict[str, str] = {}
-    for token in text.split():
-        if "=" in token:
-            k, v = token.split("=", 1)
-            out[k.strip().lower()] = v.strip()
-    return out
-
-
-def parse_kv(text: Optional[str]) -> Dict[str, str]:
-    out: Dict[str, str] = {}
     if not text:
         return out
     for token in text.split():
@@ -93,16 +84,47 @@ def parse_kv(text: Optional[str]) -> Dict[str, str]:
     return out
 
 
+def human_to_flags(s: str) -> str:
+    if not s:
+        return ""
+    s = s.lower().replace(",", " ").replace("/", " ")
+    words = s.split()
+    mapping = {
+        "a": "a",
+        "all": "a",
+        "p": "p",
+        "pcie": "p",
+        "m": "m",
+        "mem": "m",
+        "memory": "m",
+        "i": "i",
+        "inforom": "i",
+        "t": "t",
+        "thermal": "t",
+        "power": "t",
+        "n": "n",
+        "nvlink": "n",
+    }
+    flags = []
+    for w in words:
+        if w in mapping and mapping[w] not in flags:
+            flags.append(mapping[w])
+        elif len(w) == 1 and w in mapping and mapping[w] not in flags:
+            flags.append(mapping[w])
+    return "".join(flags)
+
+
 def parse_health_report(txt: str) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
     current_gpu: Optional[str] = None
     for line in txt.splitlines():
         m = re.search(r"\|\s*GPU ID:\s*(\d+)\s*\|\s*(OK|Warning|Error)", line)
         if m:
-            current_gpu = m.group(1)
-            result[current_gpu] = {"state": m.group(2), "issues": []}
+            gpu_id = m.group(1)  # Extract to variable with clear type
+            current_gpu = gpu_id
+            result[gpu_id] = {"state": m.group(2), "issues": []}
             continue
-        if current_gpu and " - " in line:
+        if current_gpu is not None and " - " in line:
             issue = line.replace("|", "").strip()
             if issue:
                 result[current_gpu]["issues"].append(issue)
@@ -276,20 +298,21 @@ async def gpu_enable_health(config: GPUHealthEnableToolConfig, builder: Builder)
 
     async def _gpu_enable_health(text: str) -> str:
         opts = parse_kv(text)
-        systems = opts.get("systems", "pcie,mem,thermal,power,nvlink,inforom")
+        # Default to 'a' (all watches)
+        systems_input = opts.get("systems", "a")
+        flags = human_to_flags(systems_input) or "a"
 
         try:
             gid = ensure_all_group()
         except Exception as e:
             return f"Failed to ensure DCGM group: {e}"
 
-        out = try_run(f"dcgmi health -g {gid} -s {systems}")
-        return out or f"Enabled health systems: {systems}"
+        out = try_run(f"dcgmi health -g {gid} -s {flags}")
+        return out or f"Enabled health systems: {flags}"
 
     yield FunctionInfo.from_fn(
         _gpu_enable_health,
-        description=("Enable DCGM background health checks on the all-GPU group. "
-                     "Optional input: 'systems=pcie,mem,thermal,power,nvlink,inforom'."),
+        description="Enable DCGM background health checks. Optional: systems=a|p|m|i|t|n or words like 'pcie nvlink'.",
     )
 
 
