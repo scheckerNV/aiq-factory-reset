@@ -5,6 +5,8 @@ This module provides accurate retrieval of BCM (Bright Cluster Manager) document
 using LlamaIndex, LlamaParse, and NVIDIA embeddings for high-quality RAG responses.
 """
 
+from . import dcgm_register
+
 import glob
 import logging
 import os
@@ -19,6 +21,9 @@ from aiq.cli.register_workflow import register_function
 from aiq.data_models.function import FunctionBaseConfig
 
 logger = logging.getLogger(__name__)
+
+
+
 
 # ========================
 # BCM Documentation RAG Tool
