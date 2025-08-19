@@ -149,6 +149,9 @@ class ReActAgentGraph(DualNodeAgent):
                         agent_thoughts = AIMessage(content=intermediate_step.log)
                         agent_scratchpad.append(agent_thoughts)
                         tool_response_content = str(state.tool_responses[index].content)
+                        # Avoid adding empty HumanMessage content (LLM API rejects empty message content)
+                        if tool_response_content.strip() == "":
+                            tool_response_content = "Observation: (empty)"
                         tool_response = HumanMessage(content=tool_response_content)
                         agent_scratchpad.append(tool_response)
                     agent_scratchpad += working_state
@@ -206,7 +209,9 @@ class ReActAgentGraph(DualNodeAgent):
                     # retry parsing errors, if configured
                     logger.info("%s Retrying ReAct Agent, including output parsing Observation", AGENT_LOG_PREFIX)
                     working_state.append(output_message)
-                    working_state.append(HumanMessage(content=str(ex.observation)))
+                    obs_text = str(ex.observation).strip()
+                    # Avoid empty HumanMessage content by substituting a minimal placeholder
+                    working_state.append(HumanMessage(content=obs_text or "Observation: (empty)"))
         except Exception as ex:
             logger.exception("%s Failed to call agent_node: %s", AGENT_LOG_PREFIX, ex, exc_info=True)
             raise ex
