@@ -458,7 +458,7 @@ async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
         try_run("docker rm -f prometheus")
         try_run("docker rm -f grafana")
 
-        exp_out = try_run("docker run -d --restart unless-stopped --name dcgm-exporter --net=host "
+        exp_out = try_run("docker run -d --restart unless-stopped --name dcgm-exporter --net=host --gpus all "
                           "nvcr.io/nvidia/k8s/dcgm-exporter:latest")
 
         prom_cfg = ("global:\n"
@@ -467,33 +467,46 @@ async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
                     "  - job_name: 'dcgm'\n"
                     "    static_configs:\n"
                     "      - targets: ['localhost:9400']\n")
+        prom_dir = "/tmp/prom"
         try:
-            with open("/tmp/prometheus.yml", "w") as f:
+            import os
+            os.makedirs(prom_dir, exist_ok=True)
+            with open(f"{prom_dir}/prometheus.yml", "w", encoding="utf-8") as f:
                 f.write(prom_cfg)
         except Exception as e:
-            logger.error("Failed to write /tmp/prometheus.yml: %s", e)
+            logger.error("Failed to write %s/prometheus.yml: %s", prom_dir, e)
 
         prom_out = try_run("docker run -d --restart unless-stopped --name prometheus --net=host "
-                           "-v /tmp/prometheus.yml:/etc/prometheus/prometheus.yml "
-                           "prom/prometheus:latest --storage.tsdb.retention.time=15d")
+                           "-v /tmp/prom:/etc/prometheus prom/prometheus:latest "
+                           "--config.file=/etc/prometheus/prometheus.yml "
+                           "--storage.tsdb.retention.time=15d")
 
         graf_out = try_run(
             "docker run -d --restart unless-stopped --name grafana --net=host grafana/grafana-oss:latest")
 
-        try:
-            p_status = str(requests.get(f"{PROM_URL}/-/ready", timeout=3).status_code)
-        except Exception:
-            p_status = "unreachable"
-        try:
-            g_status = str(requests.get(f"{GRAFANA_URL}/login", timeout=3).status_code)
-        except Exception:
-            g_status = "unreachable"
+        def wait_http(url: str, timeout_s: int = 60) -> str:
+            import time
+            start = time.time()
+            while time.time() - start < timeout_s:
+                try:
+                    if requests.get(url, timeout=3).status_code == 200:
+                        return "200"
+                except Exception:
+                    pass
+                time.sleep(2)
+            return "timeout"
+
+        p_status = wait_http(f"{PROM_URL}/-/ready", 60)
+        g_status = wait_http(f"{GRAFANA_URL}/login", 60)
+
+        def _ok(s: str | None) -> str:
+            return "ok" if s and not s.startswith("ERROR:") else "failed"
 
         summary_lines = [
             "Started monitoring stack:",
-            f"dcgm-exporter: http://localhost:9400/metrics ({exp_out[:12] if exp_out else ''})",
-            f"Prometheus: {PROM_URL} (ready={p_status}, id={prom_out[:12] if prom_out else ''})",
-            f"Grafana: {GRAFANA_URL} (login={g_status}, id={graf_out[:12] if graf_out else ''})",
+            f"dcgm-exporter: http://localhost:9400/metrics ({_ok(exp_out)})",
+            f"Prometheus: {PROM_URL} (ready={p_status}, status={_ok(prom_out)})",
+            f"Grafana: {GRAFANA_URL} (login={g_status}, status={_ok(graf_out)})",
             "Grafana default login: admin/admin",
         ]
         return "\n".join(summary_lines)
