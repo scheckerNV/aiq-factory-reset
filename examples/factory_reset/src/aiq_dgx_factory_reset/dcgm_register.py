@@ -6,12 +6,15 @@ import json
 import logging
 import re
 import shlex
+import socket
 import subprocess
 from os import getenv
 from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from urllib.parse import urlparse
+from urllib.parse import urlunparse
 
 import requests
 
@@ -695,6 +698,30 @@ def _build_dcgm_dashboard(title: str, ds_uid: str, refresh: str = "5s") -> Dict[
     }
 
 
+def _node_ip() -> str:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    finally:
+        s.close()
+    return ip
+
+
+def _public_base(url: str) -> str:
+    p = urlparse(url)
+    host = getenv("PUBLIC_HOST") or (p.hostname if p.hostname not in ("localhost", "127.0.0.1") else _node_ip())
+    netloc = f"{host}:{p.port}" if p.port else host
+    return urlunparse((p.scheme, netloc, "", "", "", ""))
+
+
+def _public_host_and_port(url: str) -> tuple[str, int]:
+    p = urlparse(url)
+    host = getenv("PUBLIC_HOST") or (p.hostname if p.hostname not in ("localhost", "127.0.0.1") else _node_ip())
+    port = p.port or 3000
+    return host, port
+
+
 @register_function(config_type=GrafanaCreateDashboardConfig)
 async def grafana_create_dashboard(config: GrafanaCreateDashboardConfig, builder: Builder):
 
@@ -722,8 +749,10 @@ async def grafana_create_dashboard(config: GrafanaCreateDashboardConfig, builder
             return sanitize(f"Failed to create dashboard: {e}")
 
         url_path = resp.get("url") or f"/d/{resp.get('uid', '')}"
-        full_url = f"{GRAFANA_URL}{url_path}"
-        # Best-effort attempt to open locally on the host where this runs
+        base_for_links = _public_base(GRAFANA_URL)
+        full_url = f"{base_for_links}{url_path}"
+
+        opened_note = ""
         if should_open:
             try:
                 import platform
@@ -731,11 +760,25 @@ async def grafana_create_dashboard(config: GrafanaCreateDashboardConfig, builder
                 system = platform.system()
                 if system == "Darwin":
                     _sp.Popen(["open", full_url])
+                    opened_note = " (attempted to open on host)"
                 elif system == "Linux":
                     _sp.Popen(["xdg-open", full_url])
+                    opened_note = " (attempted to open on host)"
             except Exception:
                 pass
-        return sanitize(f"Dashboard created: {full_url}")
+
+        remote_host, remote_port = _public_host_and_port(GRAFANA_URL)
+        local_port = getenv("LOCAL_GRAFANA_PORT", "3001")
+        ssh_target = getenv("SSH_TARGET", f"{getenv('USER', 'dgxuser1')}@{remote_host}")
+        tunnel_cmd = f"ssh -fN -o ExitOnForwardFailure=yes -L {local_port}:localhost:{remote_port} {ssh_target}"
+        local_url = f"http://localhost:{local_port}{url_path}"
+
+        lines = [
+            f"Dashboard created: {full_url}{opened_note}",
+            "- To open from your laptop via SSH tunnel, run:",
+            f" {tunnel_cmd} && (xdg-open {local_url} || open {local_url} || start {local_url})",
+        ]
+        return sanitize("\n".join(lines))
 
     yield FunctionInfo.from_fn(
         _grafana_create_dashboard,
