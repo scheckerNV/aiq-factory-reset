@@ -14,6 +14,8 @@ functions:
     _type: prom_stack_start
   prom_query:
     _type: prom_query
+  grafana_create_dashboard:
+    _type: grafana_create_dashboard
 
 llms:
   nim_llm:
@@ -37,6 +39,7 @@ workflow:
     - gpu_nvlink_status
     - prom_stack_start
     - prom_query
+    - grafana_create_dashboard
   llm_name: nim_llm
   verbose: true
   parse_agent_response_max_retries: 3

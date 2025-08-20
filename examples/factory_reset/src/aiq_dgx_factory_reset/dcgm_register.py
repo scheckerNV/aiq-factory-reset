@@ -609,3 +609,136 @@ async def prom_query(config: PromQueryConfig, builder: Builder):
         description=(
             "Query Prometheus for DCGM metrics. Optional: 'query=<promql>'. If omitted, returns default summaries."),
     )
+
+
+class GrafanaCreateDashboardConfig(FunctionBaseConfig, name="grafana_create_dashboard"):
+    pass
+
+
+def _grafana_request(path: str, method: str = "GET", payload: Optional[dict] = None):
+    headers = {"Content-Type": "application/json"}
+    token = getenv("GF_TOKEN")
+    creds = getenv("GF_CREDS")
+    auth = None
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    elif creds and ":" in creds:
+        u, p = creds.split(":", 1)
+        auth = (u, p)
+    r = requests.request(method, f"{GRAFANA_URL}{path}", headers=headers, auth=auth, json=payload, timeout=10)
+    r.raise_for_status()
+    return r.json() if r.text else {}
+
+
+def _ensure_prom_datasource(name: str = "Prometheus") -> Dict[str, Any]:
+    try:
+        return _grafana_request(f"/api/datasources/name/{name}")
+    except Exception:
+        payload = {
+            "name": name,
+            "type": "prometheus",
+            "access": "proxy",
+            "url": getenv("PROM_URL", PROM_URL),
+            "isDefault": True,
+            "basicAuth": False,
+        }
+        return _grafana_request("/api/datasources", "POST", payload)
+
+
+def _build_dcgm_dashboard(title: str, ds_uid: str, refresh: str = "5s") -> Dict[str, Any]:
+    return {
+        "title": title,
+        "timezone": "browser",
+        "refresh": refresh,
+        "panels": [
+            {
+                "type":
+                    "timeseries",
+                "title":
+                    "GPU Temperature (C)",
+                "gridPos": {
+                    "h": 8, "w": 24, "x": 0, "y": 0
+                },
+                "targets": [{
+                    "refId": "A",
+                    "expr": "DCGM_FI_DEV_GPU_TEMP",
+                    "legendFormat": "GPU {{gpu}}",
+                    "datasource": {
+                        "type": "prometheus", "uid": ds_uid
+                    },
+                }],
+            },
+            {
+                "type":
+                    "timeseries",
+                "title":
+                    "SM Utilization (%)",
+                "gridPos": {
+                    "h": 8, "w": 24, "x": 0, "y": 8
+                },
+                "targets": [{
+                    "refId": "A",
+                    "expr": "DCGM_FI_DEV_GPU_UTIL",
+                    "legendFormat": "GPU {{gpu}}",
+                    "datasource": {
+                        "type": "prometheus", "uid": ds_uid
+                    },
+                }],
+            },
+        ],
+        "templating": {
+            "list": []
+        },
+        "time": {
+            "from": "now-1h", "to": "now"
+        },
+    }
+
+
+@register_function(config_type=GrafanaCreateDashboardConfig)
+async def grafana_create_dashboard(config: GrafanaCreateDashboardConfig, builder: Builder):
+
+    async def _grafana_create_dashboard(text: str) -> str:
+        opts = parse_kv(text)
+        name = opts.get("name", "DCGM Overview")
+        refresh = opts.get("refresh", "5s")
+        overwrite = opts.get("overwrite", "true").lower() in ("1", "true", "yes", "y")
+        should_open = opts.get("open", "false").lower() in ("1", "true", "yes", "y")
+
+        try:
+            ds = _ensure_prom_datasource("Prometheus")
+        except Exception as e:
+            return sanitize(f"Failed to ensure Prometheus datasource: {e}")
+
+        ds_uid = ds.get("uid")
+        if not ds_uid:
+            return sanitize("Failed to ensure Prometheus datasource in Grafana")
+
+        dash = _build_dcgm_dashboard(name, ds_uid, refresh)
+        payload = {"dashboard": dash, "overwrite": overwrite}
+        try:
+            resp = _grafana_request("/api/dashboards/db", "POST", payload)
+        except Exception as e:
+            return sanitize(f"Failed to create dashboard: {e}")
+
+        url_path = resp.get("url") or f"/d/{resp.get('uid', '')}"
+        full_url = f"{GRAFANA_URL}{url_path}"
+        # Best-effort attempt to open locally on the host where this runs
+        if should_open:
+            try:
+                import platform
+                import subprocess as _sp
+                system = platform.system()
+                if system == "Darwin":
+                    _sp.Popen(["open", full_url])
+                elif system == "Linux":
+                    _sp.Popen(["xdg-open", full_url])
+            except Exception:
+                pass
+        return sanitize(f"Dashboard created: {full_url}")
+
+    yield FunctionInfo.from_fn(
+        _grafana_create_dashboard,
+        description=("Create a basic DCGM Grafana dashboard and return its URL. "
+                     "Optional: name=..., refresh=5s, overwrite=true|false."),
+    )
