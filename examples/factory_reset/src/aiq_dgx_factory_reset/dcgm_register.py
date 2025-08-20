@@ -492,8 +492,19 @@ async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
                            "--config.file=/etc/prometheus/prometheus.yml "
                            "--storage.tsdb.retention.time=15d")
 
-        graf_out = try_run(
-            "docker run -d --restart unless-stopped --name grafana --net=host grafana/grafana-oss:latest")
+        # Ensure a persistent Grafana data dir and set admin password (defaults to 'admin' if not provided)
+        try:
+            import os
+            graf_dir = "/tmp/grafana"
+            os.makedirs(graf_dir, exist_ok=True)
+        except Exception as e:
+            logger.error("Failed to ensure Grafana data dir: %s", e)
+
+        graf_admin_pw = getenv('GRAFANA_ADMIN_PASSWORD', 'admin')
+        graf_out = try_run("docker run -d --restart unless-stopped --name grafana --net=host "
+                           f"-e GF_SECURITY_ADMIN_PASSWORD={graf_admin_pw} "
+                           "-v /tmp/grafana:/var/lib/grafana "
+                           "grafana/grafana-oss:latest")
 
         def wait_http(url: str, timeout_s: int = 60) -> str:
             import time
@@ -518,7 +529,7 @@ async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
             f"dcgm-exporter: http://localhost:9400/metrics ({_ok(exp_out)})",
             f"Prometheus: {PROM_URL} (ready={p_status}, status={_ok(prom_out)})",
             f"Grafana: {GRAFANA_URL} (login={g_status}, status={_ok(graf_out)})",
-            "Grafana default login: admin/admin",
+            "Grafana admin user: admin (password from GRAFANA_ADMIN_PASSWORD)",
         ]
         return sanitize("\n".join(summary_lines))
 
