@@ -532,6 +532,7 @@ async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
                 time.sleep(2)
             return "timeout"
 
+        exp_status = wait_http("http://localhost:9400/metrics", 60)
         p_status = wait_http(f"{PROM_URL}/-/ready", 120)
         g_health = wait_http(f"{GRAFANA_URL}/api/health", 180)
         g_status = wait_http(f"{GRAFANA_URL}/login", 180)
@@ -541,7 +542,7 @@ async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
 
         summary_lines = [
             "Started monitoring stack:",
-            f"dcgm-exporter: http://localhost:9400/metrics ({_ok(exp_out)})",
+            f"dcgm-exporter: http://localhost:9400/metrics (metrics={exp_status})",
             f"Prometheus: {PROM_URL} (ready={p_status})",
             f"Grafana: {GRAFANA_URL} (health={g_health}, login={g_status})",
             "Grafana admin user: admin (password from GRAFANA_ADMIN_PASSWORD)",
