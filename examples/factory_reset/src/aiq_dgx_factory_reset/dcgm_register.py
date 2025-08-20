@@ -55,10 +55,23 @@ def parse_kv(text: Optional[str]) -> Dict[str, str]:
     out: Dict[str, str] = {}
     if not text:
         return out
-    for token in text.split():
-        if "=" in token:
-            k, v = token.split("=", 1)
-            out[k.strip().lower()] = v.strip()
+    s = str(text).strip().strip("`")
+    # Try JSON first
+    if s.startswith("{") and s.endswith("}"):
+        try:
+            obj = json.loads(s)
+            if isinstance(obj, dict):
+                # If wrapped as {"text": "name=... refresh=..."}
+                if "text" in obj and isinstance(obj["text"], str):
+                    return parse_kv(obj["text"])  # recurse on inner text
+                return {str(k).strip().lower(): str(v).strip() for k, v in obj.items()}
+        except Exception:
+            pass
+    # Fallback: split on whitespace and commas into key=value
+    for tok in re.split(r"[\s,]+", s):
+        if "=" in tok:
+            k, v = tok.split("=", 1)
+            out[k.strip().lower()] = v.strip().strip(",")
     return out
 
 

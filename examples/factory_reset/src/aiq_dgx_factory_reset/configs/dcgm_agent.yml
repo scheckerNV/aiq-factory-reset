@@ -42,4 +42,4 @@ workflow:
     - grafana_create_dashboard
   llm_name: nim_llm
   verbose: true
-  parse_agent_response_max_retries: 3
+  parse_agent_response_max_retries: 5
