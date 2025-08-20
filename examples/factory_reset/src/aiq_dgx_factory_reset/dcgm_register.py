@@ -465,12 +465,22 @@ class PromStackStartConfig(FunctionBaseConfig, name="prom_stack_start"):
 async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
 
     async def _prom_stack_start(text: str) -> str:
-        try_run("docker rm -f dcgm-exporter")
-        try_run("docker rm -f prometheus")
-        try_run("docker rm -f grafana")
+        opts = parse_kv(text)
+        force = opts.get("force", "false").lower() in ("1", "true", "yes", "y")
 
-        exp_out = try_run("docker run -d --restart unless-stopped --name dcgm-exporter --net=host --gpus all "
-                          "nvcr.io/nvidia/k8s/dcgm-exporter:latest")
+        def is_running(name: str) -> bool:
+            out = try_run("docker ps --format {{.Names}}")
+            return any(line.strip() == name for line in out.splitlines())
+
+        if force:
+            try_run("docker rm -f dcgm-exporter")
+            try_run("docker rm -f prometheus")
+            try_run("docker rm -f grafana")
+
+        exp_out = None
+        if not is_running("dcgm-exporter"):
+            exp_out = try_run("docker run -d --restart unless-stopped --name dcgm-exporter --net=host --gpus all "
+                              "nvcr.io/nvidia/k8s/dcgm-exporter:latest")
 
         prom_cfg = ("global:\n"
                     "  scrape_interval: 5s\n"
@@ -487,10 +497,12 @@ async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
         except Exception as e:
             logger.error("Failed to write %s/prometheus.yml: %s", prom_dir, e)
 
-        prom_out = try_run("docker run -d --restart unless-stopped --name prometheus --net=host "
-                           "-v /tmp/prom:/etc/prometheus prom/prometheus:latest "
-                           "--config.file=/etc/prometheus/prometheus.yml "
-                           "--storage.tsdb.retention.time=15d")
+        prom_out = None
+        if not is_running("prometheus"):
+            prom_out = try_run("docker run -d --restart unless-stopped --name prometheus --net=host "
+                               "-v /tmp/prom:/etc/prometheus prom/prometheus:latest "
+                               "--config.file=/etc/prometheus/prometheus.yml "
+                               "--storage.tsdb.retention.time=15d")
 
         # Ensure a persistent Grafana data dir and set admin password (defaults to 'admin' if not provided)
         try:
@@ -500,11 +512,13 @@ async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
         except Exception as e:
             logger.error("Failed to ensure Grafana data dir: %s", e)
 
-        graf_admin_pw = getenv('GRAFANA_ADMIN_PASSWORD', 'admin')
-        graf_out = try_run("docker run -d --restart unless-stopped --name grafana --net=host "
-                           f"-e GF_SECURITY_ADMIN_PASSWORD={graf_admin_pw} "
-                           "-v /tmp/grafana:/var/lib/grafana "
-                           "grafana/grafana-oss:latest")
+        graf_out = None
+        if not is_running("grafana"):
+            graf_admin_pw = getenv('GRAFANA_ADMIN_PASSWORD', 'admin')
+            graf_out = try_run("docker run -d --restart unless-stopped --name grafana --net=host "
+                               f"-e GF_SECURITY_ADMIN_PASSWORD={graf_admin_pw} "
+                               "-v /tmp/grafana:/var/lib/grafana "
+                               "grafana/grafana-oss:latest")
 
         def wait_http(url: str, timeout_s: int = 60) -> str:
             import time
@@ -518,8 +532,9 @@ async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
                 time.sleep(2)
             return "timeout"
 
-        p_status = wait_http(f"{PROM_URL}/-/ready", 60)
-        g_status = wait_http(f"{GRAFANA_URL}/login", 60)
+        p_status = wait_http(f"{PROM_URL}/-/ready", 120)
+        g_health = wait_http(f"{GRAFANA_URL}/api/health", 180)
+        g_status = wait_http(f"{GRAFANA_URL}/login", 180)
 
         def _ok(s: str | None) -> str:
             return "ok" if s and not s.startswith("ERROR:") else "failed"
@@ -527,8 +542,8 @@ async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
         summary_lines = [
             "Started monitoring stack:",
             f"dcgm-exporter: http://localhost:9400/metrics ({_ok(exp_out)})",
-            f"Prometheus: {PROM_URL} (ready={p_status}, status={_ok(prom_out)})",
-            f"Grafana: {GRAFANA_URL} (login={g_status}, status={_ok(graf_out)})",
+            f"Prometheus: {PROM_URL} (ready={p_status})",
+            f"Grafana: {GRAFANA_URL} (health={g_health}, login={g_status})",
             "Grafana admin user: admin (password from GRAFANA_ADMIN_PASSWORD)",
         ]
         return sanitize("\n".join(summary_lines))
@@ -639,9 +654,18 @@ def _grafana_request(path: str, method: str = "GET", payload: Optional[dict] = N
     elif creds and ":" in creds:
         u, p = creds.split(":", 1)
         auth = (u, p)
-    r = requests.request(method, f"{GRAFANA_URL}{path}", headers=headers, auth=auth, json=payload, timeout=10)
-    r.raise_for_status()
-    return r.json() if r.text else {}
+    # retry up to ~60s for Grafana to be ready
+    import time
+    last_err = None
+    for _ in range(12):
+        try:
+            r = requests.request(method, f"{GRAFANA_URL}{path}", headers=headers, auth=auth, json=payload, timeout=5)
+            r.raise_for_status()
+            return r.json() if r.text else {}
+        except Exception as e:
+            last_err = e
+            time.sleep(5)
+    raise last_err
 
 
 def _ensure_prom_datasource(name: str = "Prometheus") -> Dict[str, Any]:
@@ -742,6 +766,11 @@ async def grafana_create_dashboard(config: GrafanaCreateDashboardConfig, builder
         refresh = opts.get("refresh", "5s")
         overwrite = opts.get("overwrite", "true").lower() in ("1", "true", "yes", "y")
         should_open = opts.get("open", "false").lower() in ("1", "true", "yes", "y")
+        # Ensure Grafana is healthy before API calls
+        try:
+            _ = _grafana_request("/api/health")
+        except Exception as e:
+            return sanitize(f"Grafana not ready or unreachable at {GRAFANA_URL}: {e}")
 
         try:
             ds = _ensure_prom_datasource("Prometheus")
