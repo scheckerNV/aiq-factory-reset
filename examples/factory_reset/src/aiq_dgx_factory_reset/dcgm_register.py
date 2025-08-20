@@ -7,6 +7,7 @@ import logging
 import re
 import shlex
 import subprocess
+from os import getenv
 from typing import Any
 from typing import Dict
 from typing import List
@@ -22,8 +23,8 @@ from aiq.data_models.function import FunctionBaseConfig
 logger = logging.getLogger(__name__)
 
 GROUP_NAME = "GPU_ALL"  # dedicated DCGM group name for all GPUs
-PROM_URL = "http://localhost:9090"
-GRAFANA_URL = "http://localhost:3000"
+PROM_URL = getenv("PROM_URL", "http://localhost:9090")
+GRAFANA_URL = getenv("GRAFANA_URL", "http://localhost:3000")
 
 
 def run(cmd: str, timeout: Optional[int] = None) -> str:
@@ -535,6 +536,7 @@ async def prom_query(config: PromQueryConfig, builder: Builder):
     async def _prom_query(text: str) -> str:
         opts = parse_kv(text)
         user_query = opts.get("query")
+        output = opts.get("output", "text")  # text (default) | json
 
         def run_query(query_str: str):
             try:
@@ -545,7 +547,11 @@ async def prom_query(config: PromQueryConfig, builder: Builder):
                 return [{"error": str(e)}]
 
         if user_query:
-            return sanitize(json.dumps(run_query(user_query)))
+            data = run_query(user_query)
+            payload = json.dumps(data)
+            if output == "json":
+                return sanitize(payload)[:6000]
+            return sanitize(f"{len(data)} series (use output=json for details)")[:6000]
 
         def first_nonempty(queries: list[str]):
             for q in queries:
@@ -577,7 +583,26 @@ async def prom_query(config: PromQueryConfig, builder: Builder):
                     "increase(DCGM_FI_DEV_XID_ERRORS[1h])",
                 ]),
         }
-        return sanitize(json.dumps(results))
+        if output == "json":
+            return sanitize(json.dumps(results))[:6000]
+
+        def pick(maplist):
+            try:
+                return {int(e["metric"].get("gpu", -1)): e["value"][1] for e in maplist} if maplist else {}
+            except Exception:
+                return {}
+
+        temps = pick(results.get("temp_max_5m"))
+        sm = pick(results.get("sm_util_avg_5m"))
+        lines = ["Prometheus DCGM summary (5m):"]
+        for gpu in sorted(set(temps.keys()) | set(sm.keys())):
+            t = temps.get(gpu, "?")
+            u = sm.get(gpu, "?")
+            lines.append(f"GPU {gpu}: temp {t}C, SM util {u}%")
+        xid = results.get("xid_1h") or []
+        ecc = results.get("ecc_dbe_1h") or []
+        lines.append(f"XID errors 1h: {len(xid)} series; ECC DBE 1h: {len(ecc)} series")
+        return sanitize("\n".join(lines))[:6000]
 
     yield FunctionInfo.from_fn(
         _prom_query,
