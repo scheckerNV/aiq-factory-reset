@@ -146,7 +146,9 @@ class ReActAgentGraph(DualNodeAgent):
                     # and give the agent the response from the tool it called
                     agent_scratchpad = []
                     for index, intermediate_step in enumerate(state.agent_scratchpad):
-                        agent_thoughts = AIMessage(content=intermediate_step.log)
+                        # Avoid empty AIMessage content for agent thoughts
+                        thought_text = str(intermediate_step.log).strip()
+                        agent_thoughts = AIMessage(content=thought_text or "Thought: (empty)")
                         agent_scratchpad.append(agent_thoughts)
                         tool_response_content = str(state.tool_responses[index].content)
                         # Avoid adding empty HumanMessage content (LLM API rejects empty message content)
@@ -208,7 +210,11 @@ class ReActAgentGraph(DualNodeAgent):
                         return state
                     # retry parsing errors, if configured
                     logger.info("%s Retrying ReAct Agent, including output parsing Observation", AGENT_LOG_PREFIX)
-                    working_state.append(output_message)
+                    # Avoid propagating an empty AIMessage into the next prompt
+                    safe_output = output_message
+                    if str(safe_output.content).strip() == "":
+                        safe_output = AIMessage(content="(empty)")
+                    working_state.append(safe_output)
                     obs_text = str(ex.observation).strip()
                     # Avoid empty HumanMessage content by substituting a minimal placeholder
                     working_state.append(HumanMessage(content=obs_text or "Observation: (empty)"))

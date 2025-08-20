@@ -88,6 +88,13 @@ def human_to_flags(s: str) -> str:
     return "".join(flags)
 
 
+def sanitize(s: Optional[str], fallback: str = "OK") -> str:
+    if not s:
+        return fallback
+    s2 = s.strip()
+    return s2 if s2 else fallback
+
+
 # get health status of all GPUs
 def parse_health_report(txt: str) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
@@ -206,9 +213,9 @@ async def gpu_status(config: GPUStatusToolConfig, builder: Builder):
             txt = "\n".join(lines)
             # hard cap to keep LLM happy
             MAXLEN = 6000
-            return txt if len(txt) <= MAXLEN else (txt[:MAXLEN] + "\n...truncated...")
+            return sanitize(txt if len(txt) <= MAXLEN else (txt[:MAXLEN] + "\n...truncated..."))
         # JSON on demand only
-        return json.dumps(data)
+        return sanitize(json.dumps(data))
 
     yield FunctionInfo.from_fn(
         _gpu_status,
@@ -246,7 +253,7 @@ async def gpu_run_diagnostics(config: GPUDiagnosticsToolConfig, builder: Builder
             # keep some context, but cap size
             MAXLEN = 6000
             if len(raw) <= MAXLEN:
-                return raw or "No diagnostic output."
+                return sanitize(raw or "No diagnostic output.")
             # Try to preserve the summary tail if present
             head = raw[:3000]
             tail = raw[-2500:]
@@ -262,7 +269,7 @@ async def gpu_run_diagnostics(config: GPUDiagnosticsToolConfig, builder: Builder
                 except Exception:
                     pass
         payload = json.dumps(json_obj if json_obj is not None else {"raw": raw})
-        return payload[:120000]  # cap to ~120 KB
+        return sanitize(payload[:120000])  # cap to ~120 KB
 
     yield FunctionInfo.from_fn(
         _gpu_run_diagnostics,
@@ -296,7 +303,7 @@ async def gpu_enable_health(config: GPUHealthEnableToolConfig, builder: Builder)
         if fetch_json:
             msg.append(fetch_json)
         msg.append("Note: watched systems with (*) need ~60 seconds before first check (-c) shows results.")
-        return "\n".join(msg)
+        return sanitize("\n".join(msg))
 
     yield FunctionInfo.from_fn(
         _gpu_enable_health,
@@ -317,7 +324,7 @@ async def gpu_nvlink_status(config: GPUNvlinkStatusToolConfig, builder: Builder)
 
         raw = try_run("dcgmi nvlink --link-status")
         if output == "text" or not raw:
-            return raw or "No NVLink status output."
+            return sanitize(raw or "No NVLink status output.")
 
         summary = {"gpus": {}, "nvswitches": {}}
         section = None
@@ -343,7 +350,7 @@ async def gpu_nvlink_status(config: GPUNvlinkStatusToolConfig, builder: Builder)
             if current and tokens and set(tokens).issubset({"U", "D", "X", "_"}):
                 summary["gpus" if section == "gpus" else "nvswitches"][current] = tokens
 
-        return json.dumps(summary)
+        return sanitize(json.dumps(summary))
 
     yield FunctionInfo.from_fn(
         _gpu_nvlink_status,
@@ -509,7 +516,7 @@ async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
             f"Grafana: {GRAFANA_URL} (login={g_status}, status={_ok(graf_out)})",
             "Grafana default login: admin/admin",
         ]
-        return "\n".join(summary_lines)
+        return sanitize("\n".join(summary_lines))
 
     yield FunctionInfo.from_fn(
         _prom_stack_start,
@@ -538,15 +545,39 @@ async def prom_query(config: PromQueryConfig, builder: Builder):
                 return [{"error": str(e)}]
 
         if user_query:
-            return json.dumps(run_query(user_query))
+            return sanitize(json.dumps(run_query(user_query)))
+
+        def first_nonempty(queries: list[str]):
+            for q in queries:
+                r = run_query(q)
+                if isinstance(r, list) and len(r) > 0 and not (isinstance(r[0], dict) and r[0].get("error")):
+                    return r
+            return []
 
         results = {
-            "temp_max_5m": run_query("max by (gpu) (max_over_time(nvidia_dcgm_gpu_temp_celsius[5m]))"),
-            "sm_util_avg_5m": run_query("avg by (gpu) (avg_over_time(nvidia_dcgm_sm_utilization[5m]))"),
-            "ecc_dbe_1h": run_query("increase(nvidia_dcgm_ecc_dbe_total[1h])"),
-            "xid_1h": run_query("increase(nvidia_dcgm_xid_errors_total[1h])"),
+            "temp_max_5m":
+                first_nonempty([
+                    "max by (gpu) (max_over_time(nvidia_dcgm_gpu_temp_celsius[5m]))",
+                    "max by (gpu) (max_over_time(DCGM_FI_DEV_GPU_TEMP[5m]))",
+                ]),
+            "sm_util_avg_5m":
+                first_nonempty([
+                    "avg by (gpu) (avg_over_time(nvidia_dcgm_sm_utilization[5m]))",
+                    "avg by (gpu) (avg_over_time(DCGM_FI_DEV_GPU_UTIL[5m]))",
+                ]),
+            "ecc_dbe_1h":
+                first_nonempty([
+                    "increase(nvidia_dcgm_ecc_dbe_total[1h])",
+                    "increase(DCGM_FI_DEV_ECC_DBE_AGG_TOTAL[1h])",
+                    "increase(DCGM_FI_DEV_ECC_DBE_VOL_TOTAL[1h])",
+                ]),
+            "xid_1h":
+                first_nonempty([
+                    "increase(nvidia_dcgm_xid_errors_total[1h])",
+                    "increase(DCGM_FI_DEV_XID_ERRORS[1h])",
+                ]),
         }
-        return json.dumps(results)
+        return sanitize(json.dumps(results))
 
     yield FunctionInfo.from_fn(
         _prom_query,
