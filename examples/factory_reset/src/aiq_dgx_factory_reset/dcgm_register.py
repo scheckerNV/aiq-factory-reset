@@ -752,8 +752,21 @@ async def grafana_create_dashboard(config: GrafanaCreateDashboardConfig, builder
         base_for_links = _public_base(GRAFANA_URL)
         full_url = f"{base_for_links}{url_path}"
 
+        remote_host, remote_port = _public_host_and_port(GRAFANA_URL)
+        local_port = getenv("LOCAL_GRAFANA_PORT", "3001")
+        ssh_target = getenv("SSH_TARGET", f"{getenv('USER', 'dgxuser1')}@{remote_host}")
+        tunnel_cmd = f"ssh -fN -o ExitOnForwardFailure=yes -L {local_port}:localhost:{remote_port} {ssh_target}"
+        local_url = f"http://localhost:{local_port}{url_path}"
+
+        open_mode = opts.get("open", "false").lower()
+        output_mode = opts.get("output", "text").lower()
+
+        if open_mode == "local":
+            msg = f"OPEN_URL: {full_url}\nSSH_TUNNEL: {tunnel_cmd}\nLOCAL_URL: {local_url}"
+            return sanitize(msg)
+
         opened_note = ""
-        if should_open:
+        if open_mode in ("1", "true", "yes", "y"):
             try:
                 import platform
                 import subprocess as _sp
@@ -767,16 +780,19 @@ async def grafana_create_dashboard(config: GrafanaCreateDashboardConfig, builder
             except Exception:
                 pass
 
-        remote_host, remote_port = _public_host_and_port(GRAFANA_URL)
-        local_port = getenv("LOCAL_GRAFANA_PORT", "3001")
-        ssh_target = getenv("SSH_TARGET", f"{getenv('USER', 'dgxuser1')}@{remote_host}")
-        tunnel_cmd = f"ssh -fN -o ExitOnForwardFailure=yes -L {local_port}:localhost:{remote_port} {ssh_target}"
-        local_url = f"http://localhost:{local_port}{url_path}"
+        if output_mode == "json":
+            return sanitize(
+                json.dumps({
+                    "direct_url": full_url,
+                    "tunnel_cmd": tunnel_cmd,
+                    "local_url": local_url,
+                    "opened_on_host": bool(opened_note),
+                }))
 
         lines = [
             f"Dashboard created: {full_url}{opened_note}",
             "- To open from your laptop via SSH tunnel, run:",
-            f" {tunnel_cmd} && (xdg-open {local_url} || open {local_url} || start {local_url})",
+            f"  {tunnel_cmd} && (xdg-open {local_url} || open {local_url} || start {local_url})",
         ]
         return sanitize("\n".join(lines))
 
