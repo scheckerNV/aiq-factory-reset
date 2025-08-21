@@ -10,9 +10,12 @@ return final result with reasoning steps.
 import asyncio
 import logging
 import os
+import re
+import shlex
 from pathlib import Path
 from typing import TypedDict
 
+from filelock import FileLock
 from pydantic import Field
 
 from aiq.builder.builder import Builder
@@ -22,6 +25,29 @@ from aiq.cli.register_workflow import register_function
 from aiq.data_models.function import FunctionBaseConfig
 
 logger = logging.getLogger(__name__)
+
+# Default timeouts and limits
+REMOTE_CMD_TIMEOUT = 120
+LOCAL_CMD_TIMEOUT = 300
+MAX_FILE_READ_CHARS = 262_144  # 256 KiB approx
+
+
+def _truncate_text(text: str, limit: int = MAX_FILE_READ_CHARS) -> str:
+    if not isinstance(text, str):
+        return text
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n...[truncated]...\n"
+
+
+def _extract_cmsh_commands(text: str) -> list[str]:
+    cmds: list[str] = []
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if s.startswith('cmsh -c "') and s.endswith('"'):
+            cmds.append(s)
+    return cmds
+
 
 # ========================
 # DGX Documentation RAG Tool
@@ -52,9 +78,10 @@ async def dgx_expert_rag(config: DGXExpertRAGConfig, _builder: Builder):
         if not os.path.exists(config.docs_path):
             return f"❌ DGX documentation not found at {config.docs_path}"
 
+        prev_api: str | None = None
         try:
             from llama_index.core import Document
-            from llama_index.core import Settings
+            from llama_index.core import ServiceContext
             from llama_index.core import StorageContext
             from llama_index.core import VectorStoreIndex
             from llama_index.core import load_index_from_storage
@@ -64,47 +91,48 @@ async def dgx_expert_rag(config: DGXExpertRAGConfig, _builder: Builder):
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
             if not nvidia_api_key:
                 return ("❌ NVIDIA API key not provided. Set NVIDIA_API_KEY environment variable or provide in config.")
+            prev_api = os.environ.get("NVIDIA_API_KEY")
             os.environ["NVIDIA_API_KEY"] = nvidia_api_key
 
-            Settings.llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
-            Settings.embed_model = NVIDIAEmbedding(model="nvidia/llama-3.2-nv-embedqa-1b-v2", truncate="END")
+            llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
+            embed = NVIDIAEmbedding(model="nvidia/llama-3.2-nv-embedqa-1b-v2", truncate="END")
+            service_context = ServiceContext.from_defaults(llm=llm, embed_model=embed)
 
             docs_path_obj = Path(config.docs_path)
             docstore_path = os.path.join(config.persist_dir, "docstore.json")
-            if os.path.exists(docstore_path):
-                storage_context = StorageContext.from_defaults(persist_dir=config.persist_dir)
-                index = load_index_from_storage(storage_context)
-            else:
-                os.makedirs(config.persist_dir, exist_ok=True)
-                documents: list[Document] = []
+            lock_path = Path(config.persist_dir) / ".index.lock"
+            os.makedirs(config.persist_dir, exist_ok=True)
+            with FileLock(str(lock_path)):
+                if os.path.exists(docstore_path):
+                    storage_context = StorageContext.from_defaults(persist_dir=config.persist_dir)
+                    index = await asyncio.to_thread(load_index_from_storage, storage_context)
+                else:
+                    documents: list[Document] = []
+                    for md_file in docs_path_obj.rglob("*.md"):
+                        try:
+                            # Read files off the event loop
+                            content = await asyncio.to_thread(md_file.read_text, encoding="utf-8")
+                            documents.append(
+                                Document(
+                                    text=content,
+                                    metadata={
+                                        "source": str(md_file), "file_name": md_file.name
+                                    },
+                                ))
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning("Failed to read %s: %s", md_file, e)
 
-                # Markdown
-                for md_file in docs_path_obj.glob("*.md"):
-                    try:
-                        documents.append(
-                            Document(
-                                text=md_file.read_text(encoding="utf-8"),
-                                metadata={
-                                    "source": str(md_file), "file_name": md_file.name
-                                },
-                            ))
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("Failed to read %s: %s", md_file, e)
+                    if not documents:
+                        return f"❌ No DGX documentation files found in {config.docs_path}"
 
-                # PDFs: optional (skipped if LlamaParse not configured)
-                # for pdf_file in docs_path_obj.glob("*.pdf"):
-                #     pass
-
-                if not documents:
-                    return f"❌ No DGX documentation files found in {config.docs_path}"
-
-                index = VectorStoreIndex.from_documents(documents)
-                index.storage_context.persist(persist_dir=config.persist_dir)
+                    index = await asyncio.to_thread(
+                        lambda: VectorStoreIndex.from_documents(documents, service_context=service_context))
+                    await asyncio.to_thread(index.storage_context.persist, config.persist_dir)
 
             query_engine = index.as_query_engine(similarity_top_k=config.similarity_top_k,
                                                  response_mode=config.response_mode,
                                                  verbose=True)
-            response = query_engine.query(query)
+            response = await asyncio.to_thread(query_engine.query, query)
 
             result = "🤖 DGX Documentation Expert\n\n"
             result += f"Query: {query}\n\n"
@@ -121,6 +149,16 @@ async def dgx_expert_rag(config: DGXExpertRAGConfig, _builder: Builder):
         except Exception as e:  # noqa: BLE001
             logger.error("Error in DGX documentation search: %s", e)
             return f"❌ Error in DGX analysis: {str(e)}"
+        finally:
+            # Restore prior API key if it existed
+            try:
+                if 'prev_api' in locals():
+                    if prev_api is None:
+                        os.environ.pop("NVIDIA_API_KEY", None)
+                    else:
+                        os.environ["NVIDIA_API_KEY"] = prev_api
+            except Exception:
+                pass
 
     yield FunctionInfo.from_fn(_search_dgx_docs,
                                description="DGX hardware operational guidance and procedures (RAG over DGX docs)")
@@ -145,11 +183,7 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
     async def _run_node_assessment(input_text: str) -> str:
         """Upload and execute the dedicated node_assessment.sh script; return results dir."""
         try:
-            script_path_on_disk = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                "scripts",
-                "node_assessment.sh",
-            )
+            script_path_on_disk = str(Path(__file__).resolve().parents[2] / "scripts" / "node_assessment.sh")
             if not os.path.exists(script_path_on_disk):
                 return f"❌ node_assessment.sh not found at {script_path_on_disk}"
 
@@ -183,7 +217,11 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
             scp_proc = await asyncio.create_subprocess_exec(*scp_cmd,
                                                             stdout=asyncio.subprocess.PIPE,
                                                             stderr=asyncio.subprocess.PIPE)
-            await scp_proc.communicate()
+            try:
+                await asyncio.wait_for(scp_proc.communicate(), timeout=config.timeout)
+            except asyncio.TimeoutError:
+                scp_proc.kill()
+                return "❌ Upload timed out"
             if scp_proc.returncode != 0:
                 return "❌ Failed to upload node assessment script to cluster"
 
@@ -303,40 +341,50 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
                 for pat in patterns:
                     for f in latest_dir.glob(pat):
                         try:
-                            results.append(f"📄 {f.name}:\n{f.read_text()}\n{'='*50}\n")
+                            content = await asyncio.to_thread(f.read_text)
+                            results.append(f"📄 {f.name}:\n{_truncate_text(content)}\n{'='*50}\n")
                         except Exception:
                             pass
                 return "\n".join(results) if results else "❌ No results found."
 
             # Remote
+            remote_glob = shlex.quote(config.results_directory)
             latest_dir_cmd = [
                 "ssh",
                 f"{config.cluster_user}@{config.cluster_host}",
-                f"ls -td {config.results_directory} 2>/dev/null | head -1",
+                f"bash -lc 'ls -td -- {remote_glob} 2>/dev/null | head -1'",
             ]
             latest_proc = await asyncio.create_subprocess_exec(*latest_dir_cmd,
                                                                stdout=asyncio.subprocess.PIPE,
                                                                stderr=asyncio.subprocess.PIPE)
-            latest_stdout, _ = await latest_proc.communicate()
+            latest_stdout, _ = await asyncio.wait_for(latest_proc.communicate(), timeout=REMOTE_CMD_TIMEOUT)
             if latest_proc.returncode != 0 or not latest_stdout.strip():
                 return f"❌ Could not find latest assessment directory matching {config.results_directory}"
             latest_dir = latest_stdout.decode("utf-8").strip()
 
             remote_results: list[str] = []
             for file_pattern in patterns:
+                ld = shlex.quote(latest_dir)
+                pat = shlex.quote(file_pattern)
+                # Build a safe bash -lc command string with quoting and file labels
+                find_cmd = ("bash -lc '"
+                            f"find -- {ld} -name {pat} -print "
+                            "-exec printf \"\\n--- %s ---\\n\" {} \\; "
+                            "-exec cat {} \\;"
+                            "'")
                 ssh_cmd = [
                     "ssh",
                     f"{config.cluster_user}@{config.cluster_host}",
-                    f"find {latest_dir} -name '{file_pattern}' -exec cat {{}} \\;",
+                    find_cmd,
                 ]
                 proc = await asyncio.create_subprocess_exec(*ssh_cmd,
                                                             stdout=asyncio.subprocess.PIPE,
                                                             stderr=asyncio.subprocess.PIPE)
-                stdout, _ = await proc.communicate()
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=REMOTE_CMD_TIMEOUT)
                 if proc.returncode == 0:
                     content = stdout.decode("utf-8")
                     if content.strip():
-                        remote_results.append(f"📄 {file_pattern}:\n{content}\n{'='*50}\n")
+                        remote_results.append(f"📄 {file_pattern}:\n{_truncate_text(content)}\n{'='*50}\n")
             return (f"📊 Node Assessment Results:\n\n{os.linesep.join(remote_results)}"
                     if remote_results else "❌ No assessment results found. Run node_assessment_tool first.")
         except Exception as e:  # noqa: BLE001
@@ -512,54 +560,46 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                 # leave action_type as default
                 pass
 
-        # === Deterministic keyword overrides (safety + clarity) ===
-        user_input = (state.get("input", "") or "").lower()
-        reasoning_text = (decision_json or "").lower()
+        # === Deterministic overrides (user input only with tighter regex) ===
+        user_input = (state.get("input", "") or "")
 
-        reset_keywords = [
-            "factory reset",
-            "factory-reset",
-            "reset nodes",
-            "reset node",
-            "wipe nodes",
-            "wipe node",
-            "wipe them",
-            "wipe completely",
-            "wipe all",
-            "wipe data",
-            "wipe",
-            "reimage",
-            "re-image"
-        ]
-        generate_keywords = [
-            "apply",
-            "deploy",
-            "execute",
-            "perform",
-            "create commands",
-            "run commands",
-            "generate bcm",
-            "generate commands",
-            "bcm",
-            "execute bcm",
-            "execute commands"
-        ]
+        reset_regex = re.compile(
+            r"(\bfactory\s*-?\s*reset\b|\bre-?image\b|\bwipe\b).*\b(node|nodes|cluster|superpod|dgx)\b|"
+            r"\b(node|nodes|cluster|superpod|dgx)\b.*(\bfactory\s*-?\s*reset\b|\bre-?image\b|\bwipe\b)",
+            re.IGNORECASE,
+        )
+        generate_cmds_regex = re.compile(
+            r"(\bgenerate|\bcreate|\bproduce|\bwrite|\boutput)\b.*\b(commands?|cmsh)\b|"
+            r"\b(commands?|cmsh)\b.*(\bgenerate|\bcreate|\bproduce|\bwrite|\boutput)\b",
+            re.IGNORECASE,
+        )
 
         override_applied = False
-        # If user explicitly requests reset, force reset_nodes
-        if any(k in user_input for k in reset_keywords) or any(k in reasoning_text for k in reset_keywords):
+        if reset_regex.search(user_input):
             if action_type != "reset_nodes":
-                logger.info("Orchestrator override: detected reset keyword -> setting action_type='reset_nodes'")
+                logger.info("Orchestrator override: detected reset intent in user input -> action_type='reset_nodes'")
                 action_type = "reset_nodes"
                 override_applied = True
 
-        # If user clearly requests execution/generation but not reset, prefer generate_bcm_commands
-        if not override_applied and action_type == "diagnostics_only":
-            if any(k in user_input for k in generate_keywords) or any(k in reasoning_text for k in generate_keywords):
-                logger.info(
-                    "Orchestrator override: detected generate keyword -> setting action_type='generate_bcm_commands'")
-                action_type = "generate_bcm_commands"
-                override_applied = True
+        if (not override_applied and action_type == "diagnostics_only" and generate_cmds_regex.search(user_input)):
+            logger.info("Orchestrator override: generate-commands intent -> action_type='generate_bcm_commands'")
+            action_type = "generate_bcm_commands"
+            override_applied = True
+
+        # Explicit diagnostics intent clamp
+        diagnostics_intent_regex = re.compile(
+            r"\b(state|status|health|condition|what.?s\s+the\s+(current\s+)?state|overview|summary|list|show)\b",
+            re.IGNORECASE,
+        )
+        if diagnostics_intent_regex.search(user_input) and action_type != "diagnostics_only":
+            logger.info("Orchestrator clamp: explicit diagnostics intent -> action_type='diagnostics_only'")
+            action_type = "diagnostics_only"
+
+        # Safety floor: if LLM chose actions but user didn't explicitly request
+        if action_type in ("generate_bcm_commands", "reset_nodes"):
+            if not (reset_regex.search(user_input) or generate_cmds_regex.search(user_input)):
+                logger.info("Orchestrator clamp: no explicit user action intent -> action_type='diagnostics_only'")
+                action_type = "diagnostics_only"
 
         # === PASS 2: Conditional RAG enrichment ===
         dgx_guidance = ""
@@ -647,14 +687,20 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             commands_text = await bcm_rag.ainvoke(bcm_query)
         except Exception as e:  # noqa: BLE001
             commands_text = f"❌ Command generation error: {str(e)}"
-        return {**state, "bcm_commands": commands_text}
+        # Extract only exact cmsh commands for execution safety; if none, set message and skip execution later
+        extracted = _extract_cmsh_commands(commands_text)
+        if not extracted:
+            safe_msg = "❌ No valid cmsh commands extracted. Skipping execution."
+            return {**state, "bcm_commands": safe_msg}
+        commands_payload = "\n".join(extracted)
+        return {**state, "bcm_commands": commands_payload}
 
     async def execute_commands(state: OrchestratorState):
         if not executor:
             return {**state, "execution_result": "ℹ️ No executor configured; skipping execution."}
         cmds = state.get("bcm_commands", "")
-        if not cmds.strip():
-            return {**state, "execution_result": "❌ No commands to execute."}
+        if not cmds.strip() or not all(line.strip().startswith('cmsh -c "') for line in cmds.splitlines()):
+            return {**state, "execution_result": "❌ No executable cmsh commands. Skipping execution."}
         try:
             exec_out = await executor.ainvoke(cmds)
         except Exception as e:  # noqa: BLE001
@@ -694,7 +740,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         }
 
         route = routing_map.get(action_type, "react_agent")
-        print(f"🧭 Orchestrator routing decision: {action_type} → {route}")
+        logger.info("Orchestrator routing decision: %s -> %s", action_type, route)
         return route
 
     def route_after_react_agent(state: OrchestratorState):
@@ -702,10 +748,10 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         action_type = state.get("action_type", "diagnostics_only")
 
         if action_type == "diagnostics_only":
-            print(f"🔍 Post-agent routing: {action_type} → synthesize_diagnostics_only")
+            logger.info("Post-agent routing: %s -> synthesize_diagnostics_only", action_type)
             return "synthesize_diagnostics_only"
         else:
-            print(f"⚙️ Post-agent routing: {action_type} → generate")
+            logger.info("Post-agent routing: %s -> generate", action_type)
             return "generate"  # Continue to command generation
 
     # Build LangGraph with conditional routing
