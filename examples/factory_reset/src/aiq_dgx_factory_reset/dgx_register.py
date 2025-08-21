@@ -106,32 +106,18 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
             if not os.path.exists(script_path_on_disk):
                 return f"❌ node_assessment.sh not found at {script_path_on_disk}"
 
-            # Local run
+            # Local run (simple: inherit env, bash script directly)
             if config.cluster_host == "localhost":
-                # Ensure script is executable and run via bash -lc with enriched PATH
                 try:
                     os.chmod(script_path_on_disk, 0o755)
                 except Exception:
                     pass
-                env = os.environ.copy()
-                extra_paths = [
-                    "/cm/local/apps/cmd/bin",
-                    "/usr/sbin",
-                    "/usr/bin",
-                    "/bin",
-                    "/sbin",
-                ]
-                env["PATH"] = os.pathsep.join([*extra_paths, env.get("PATH", "")])
-                logger.info("Starting local node assessment: %s", script_path_on_disk)
                 proc = await asyncio.create_subprocess_exec(
                     "/bin/bash",
-                    "-lc",
-                    shlex.quote(script_path_on_disk),
+                    script_path_on_disk,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    env=env,
                 )
-                logger.info("Local assessment PID: %s", getattr(proc, "pid", None))
                 try:
                     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
                 except asyncio.TimeoutError:
@@ -484,7 +470,17 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             assess_out = f"❌ Node assessment timed out after {state.get('timeout', None) or LOCAL_CMD_TIMEOUT}s"
         except Exception as e:  # noqa: BLE001
             assess_out = f"❌ Node assessment error: {str(e)}"
-        return {**state, "assessment": assess_out}
+        # Refresh summary after assessment to include latest results
+        refreshed = ""
+        if node_reader:
+            try:
+                refreshed = await asyncio.wait_for(node_reader.ainvoke("summary"), timeout=LOCAL_CMD_TIMEOUT)
+            except Exception:
+                refreshed = ""
+        combined_analysis = (state.get("analysis", "") or "")
+        if refreshed:
+            combined_analysis = (combined_analysis + "\n\n" + refreshed).strip()
+        return {**state, "assessment": assess_out, "analysis": combined_analysis}
 
     async def analyze_and_decide(state: OrchestratorState):
         """
@@ -517,8 +513,9 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         user_input = (state.get("input", "") or "")
 
         reset_regex = re.compile(
-            r"(\bfactory\s*-?\s*reset\b|\bre-?image\b|\bwipe\b).*\b(node|nodes|cluster|superpod|dgx)\b|"
-            r"\b(node|nodes|cluster|superpod|dgx)\b.*(\bfactory\s*-?\s*reset\b|\bre-?image\b|\bwipe\b)",
+            r"(\bfactory\s*-?\s*reset\b|\bre-?image\b|\bre-?install\b|\bre-?flash\b|\bwipe\b|\bclean\sinstall\b)"
+            r".*\b(node|nodes|cluster|superpod|dgx)\b|"
+            r"\b(node|nodes|cluster|superpod|dgx)\b.*(\bfactory\s*-?\s*reset\b|\bre-?image\b|\bre-?install\b|\bre-?flash\b|\bwipe\b|\bclean\sinstall\b)",
             re.IGNORECASE,
         )
         generate_cmds_regex = re.compile(
@@ -598,32 +595,48 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
     async def generate_commands(state: OrchestratorState):
         if not bcm_rag:
-            return state
-        # Acquire LLM only when needed for command generation
+            return {**state, "bcm_commands": "❌ BCM RAG tool not available"}
+        # Reacquire LLM only when needed
         try:
             reasoning_llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
         except Exception as e:
             return {**state, "bcm_commands": f"❌ Could not acquire LLM: {str(e)}"}
-        context = ("ASSESSMENT:\n" + (state.get("assessment", "") or "") + "\n\nANALYSIS:\n" +
-                   (state.get("analysis", "") or ""))
+
+        # 1) Retrieve BCM guidance (and use any DGX guidance already in state)
+        try:
+            bcm_docs = await asyncio.wait_for(
+                bcm_rag.ainvoke(
+                    "Provide BCM cmsh-based procedures for DGX node reset/reimage, including exact command patterns for: "
+                    "drain/disable, reinstall OS/image, reset/power cycle, and verification. Keep it concise."),
+                timeout=LLM_STEP_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            bcm_docs = "❌ BCM guidance RAG timed out"
+        except Exception as e:
+            bcm_docs = f"❌ BCM guidance error: {str(e)}"
+
+        dgx_guidance = state.get("dgx_guidance", "")
+        assessment = state.get("assessment", "")
+        analysis = state.get("analysis", "")
+        context = ("ASSESSMENT:\n" + (assessment or "") + "\n\n"
+                   "ANALYSIS:\n" + (analysis or "") + "\n\n"
+                   "DGX GUIDANCE:\n" + (dgx_guidance or "") + "\n\n"
+                   "BCM DOCS:\n" + (bcm_docs or ""))
+
+        # 2) Ask LLM to produce rationale + commands
         try:
             chain_for_cmds = commands_prompt | reasoning_llm | StrOutputParser()
-            bcm_query = await asyncio.wait_for(chain_for_cmds.ainvoke({"context": context}), timeout=LLM_STEP_TIMEOUT)
+            llm_out = await asyncio.wait_for(chain_for_cmds.ainvoke({"context": context}), timeout=LLM_STEP_TIMEOUT)
         except asyncio.TimeoutError:
-            bcm_query = f"CONTEXT:\n{context}\n\n[Timed out generating BCM query]"
-        except Exception:
-            bcm_query = f"CONTEXT:\n{context}"
-        try:
-            commands_text = await asyncio.wait_for(bcm_rag.ainvoke(bcm_query), timeout=LLM_STEP_TIMEOUT)
-        except asyncio.TimeoutError:
-            commands_text = f"❌ Command generation timed out after {LLM_STEP_TIMEOUT}s"
-        except Exception as e:  # noqa: BLE001
-            commands_text = f"❌ Command generation error: {str(e)}"
-        # Extract only exact cmsh commands for execution safety; if none, set message and skip execution later
-        extracted = _extract_cmsh_commands(commands_text)
+            llm_out = f"CONTEXT:\n{context}\n\n[Timed out generating BCM commands]"
+        except Exception as e:
+            llm_out = f"CONTEXT:\n{context}\n\n[Error: {str(e)}]"
+
+        # 3) Extract only safe cmsh lines
+        extracted = _extract_cmsh_commands(llm_out)
         if not extracted:
-            safe_msg = "❌ No valid cmsh commands extracted. Skipping execution."
-            return {**state, "bcm_commands": safe_msg}
+            return {**state, "bcm_commands": "❌ No valid cmsh commands extracted. Skipping execution."}
+
         commands_payload = "\n".join(extracted)
         return {**state, "bcm_commands": commands_payload}
 
@@ -656,10 +669,10 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         """Synthesize results for diagnostics-only requests (no command generation/execution)"""
         final = ("# 🧭 DGX Orchestration (Diagnostics Only)\n\n"
                  "## Reasoning and Decision\n" + (state.get("analysis", "") or "") + "\n\n"
-                 "## ReAct Agent Analysis\n" + (state.get("react_agent_output", "") or "") + "\n\n"
+                 "## Assessment Output\n" + (state.get("assessment", "") or "") + "\n\n"
                  "## Recommendation\n"
-                 "Based on the analysis above, see the ReAct agent's diagnostic findings and recommendations. "
-                 "No BCM commands were generated or executed as this was a diagnostics-only request.\n")
+                 "Based on the analysis above, see the diagnostic findings. "
+                 "No BCM commands were generated or executed.\n")
         return {**state, "final_output": final}
 
     # Smart routing based on regex
@@ -673,16 +686,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         logger.info("Orchestrator routing decision: %s -> %s", action_type, route)
         return route
 
-    def route_after_react_agent(state: OrchestratorState):
-        """Route after react agent based on original LLM decision"""
-        action_type = state.get("action_type", "diagnostics_only")
-
-        if action_type == "diagnostics_only":
-            logger.info("Post-agent routing: %s -> synthesize_diagnostics_only", action_type)
-            return "synthesize_diagnostics_only"
-        else:
-            logger.info("Post-agent routing: %s -> generate", action_type)
-            return "generate"  # Continue to command generation
+    # No post-agent routing in minimal orchestrator
 
     # Build LangGraph with conditional routing
     graph = StateGraph(OrchestratorState)

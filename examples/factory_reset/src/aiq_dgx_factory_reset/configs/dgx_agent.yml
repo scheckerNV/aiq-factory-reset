@@ -128,4 +128,5 @@ llms:
 workflow:
   _type: aiq_dgx_factory_reset/dgx_orchestrator
   reasoning_llm_name: reasoning_llm
+  executor_fn: bcm_executor
   verbose: true
