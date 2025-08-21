@@ -72,7 +72,7 @@ class DGXExpertRAGConfig(FunctionBaseConfig, name="dgx_expert_rag"):
 
 
 @register_function(config_type=DGXExpertRAGConfig)
-async def dgx_expert_rag(config: DGXExpertRAGConfig, _builder: Builder):
+async def dgx_expert_rag(config: DGXExpertRAGConfig, _builder: Builder):  # noqa: ARG001
 
     async def _search_dgx_docs(query: str) -> str:
         # Minimal mode: disable heavy RAG to avoid blocking and complexity during bring-up
@@ -99,7 +99,7 @@ class NodeAssessmentToolConfig(FunctionBaseConfig, name="node_assessment_tool"):
 @register_function(config_type=NodeAssessmentToolConfig)
 async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Builder):
 
-    async def _run_node_assessment(input_text: str) -> str:
+    async def _run_node_assessment(input_text: str) -> str:  # noqa: ARG001
         """Upload and execute the dedicated node_assessment.sh script; return results dir."""
         try:
             script_path_on_disk = str(Path(__file__).resolve().parents[2] / "scripts" / "node_assessment.sh")
@@ -160,7 +160,7 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                                                             stdout=asyncio.subprocess.PIPE,
                                                             stderr=asyncio.subprocess.PIPE)
             try:
-                scp_out, scp_err = await asyncio.wait_for(scp_proc.communicate(), timeout=config.timeout)
+                _, scp_err = await asyncio.wait_for(scp_proc.communicate(), timeout=config.timeout)
             except asyncio.TimeoutError:
                 try:
                     scp_proc.kill()
@@ -180,7 +180,8 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                 "-o",
                 "StrictHostKeyChecking=accept-new",
                 f"{config.cluster_user}@{config.cluster_host}",
-                'bash -lc "chmod +x /tmp/node_assessment.sh && /tmp/node_assessment.sh; rc=$?; rm -f /tmp/node_assessment.sh; exit $rc"',
+                'bash -lc "chmod +x /tmp/node_assessment.sh && /tmp/node_assessment.sh; '
+                'rc=$?; rm -f /tmp/node_assessment.sh; exit $rc"',
             ]
             proc = await asyncio.create_subprocess_exec(*ssh_cmd,
                                                         stdout=asyncio.subprocess.PIPE,
@@ -414,8 +415,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     from langgraph.graph import StateGraph
 
     # Acquire handles lazily so registration order doesn't matter
-    reasoning_llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
-
+    # reasoning_llm will be acquired just-in-time in generate_commands
     # Optional tools used directly by the orchestrator
     try:
         node_assess = builder.get_function("node_assessment_tool")
@@ -490,19 +490,10 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         Adds deterministic keyword overrides to ensure reset requests are labeled correctly.
         """
         import json as _json
-        import logging
 
-        logger = logging.getLogger(__name__)
-
-        # Assessment / summary from node_reader
+        # Skip reader call in analyze_and_decide to avoid duplicates
+        # Assessment will be refreshed after node_assessment runs
         reader_out = ""
-        if node_reader:
-            try:
-                reader_out = await asyncio.wait_for(node_reader.ainvoke("summary"), timeout=LOCAL_CMD_TIMEOUT)
-            except asyncio.TimeoutError:
-                reader_out = "❌ Node results reader timed out"
-            except Exception:
-                reader_out = ""
 
         # === Minimal classification: regex-only ===
         extracted_json = "{}"
@@ -515,7 +506,8 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         reset_regex = re.compile(
             r"(\bfactory\s*-?\s*reset\b|\bre-?image\b|\bre-?install\b|\bre-?flash\b|\bwipe\b|\bclean\sinstall\b)"
             r".*\b(node|nodes|cluster|superpod|dgx)\b|"
-            r"\b(node|nodes|cluster|superpod|dgx)\b.*(\bfactory\s*-?\s*reset\b|\bre-?image\b|\bre-?install\b|\bre-?flash\b|\bwipe\b|\bclean\sinstall\b)",
+            r"\b(node|nodes|cluster|superpod|dgx)\b.*"
+            r"(\bfactory\s*-?\s*reset\b|\bre-?image\b|\bre-?install\b|\bre-?flash\b|\bwipe\b|\bclean\sinstall\b)",
             re.IGNORECASE,
         )
         generate_cmds_regex = re.compile(
@@ -605,9 +597,9 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         # 1) Retrieve BCM guidance (and use any DGX guidance already in state)
         try:
             bcm_docs = await asyncio.wait_for(
-                bcm_rag.ainvoke(
-                    "Provide BCM cmsh-based procedures for DGX node reset/reimage, including exact command patterns for: "
-                    "drain/disable, reinstall OS/image, reset/power cycle, and verification. Keep it concise."),
+                bcm_rag.ainvoke("Provide BCM cmsh-based procedures for DGX node reset/reimage, including exact command "
+                                "patterns for: drain/disable, reinstall OS/image, reset/power cycle, and verification. "
+                                "Keep it concise."),
                 timeout=LLM_STEP_TIMEOUT,
             )
         except asyncio.TimeoutError:
@@ -675,16 +667,17 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                  "No BCM commands were generated or executed.\n")
         return {**state, "final_output": final}
 
-    # Smart routing based on regex
+    # Always assess first, then branch
     def route_after_analysis(state: OrchestratorState):
+        # Always assess first, branch afterwards
+        logger.info("Orchestrator routing decision: %s -> assess", state.get("action_type", "diagnostics_only"))
+        return "assess"
+
+    def route_after_assess(state: OrchestratorState):
         action_type = state.get("action_type", "diagnostics_only")
         if action_type in ("generate_bcm_commands", "reset_nodes"):
-            route = "generate"
-        else:
-            # Diagnostics path should run assessment, then synthesize
-            route = "assess"
-        logger.info("Orchestrator routing decision: %s -> %s", action_type, route)
-        return route
+            return "generate"
+        return "synthesize_diagnostics_only"
 
     # No post-agent routing in minimal orchestrator
 
@@ -699,14 +692,15 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
     graph.set_entry_point("analyze")
 
-    # Route from analyze to either generate or (diagnostics) assess
-    graph.add_conditional_edges("analyze", route_after_analysis, {
-        "generate": "generate",
-        "assess": "assess",
-    })
+    # Always route to assess first
+    graph.add_conditional_edges("analyze", route_after_analysis, {"assess": "assess"})
 
-    # After assessment, synthesize diagnostics-only report
-    graph.add_edge("assess", "synthesize_diagnostics_only")
+    # After assessment, branch to generate or synthesize_diagnostics_only
+    graph.add_conditional_edges("assess",
+                                route_after_assess, {
+                                    "generate": "generate",
+                                    "synthesize_diagnostics_only": "synthesize_diagnostics_only",
+                                })
 
     graph.add_edge("generate", "execute")
     graph.add_edge("execute", "synthesize")
