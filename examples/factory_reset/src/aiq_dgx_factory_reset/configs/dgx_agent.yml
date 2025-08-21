@@ -126,6 +126,5 @@ llms:
 #     Ensure guidance is clear, accurate, and best-practice aligned for DGX SuperPOD environments.
 
 workflow:
-  _type: function
-  function_name: dgx_orchestrator
+  _type: aiq_dgx_factory_reset/dgx_orchestrator
   verbose: true
