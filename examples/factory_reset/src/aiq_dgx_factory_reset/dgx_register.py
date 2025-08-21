@@ -106,39 +106,27 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
             if not os.path.exists(script_path_on_disk):
                 return f"❌ node_assessment.sh not found at {script_path_on_disk}"
 
-            # Local run (simple: inherit env, bash script directly)
+            # Use the same reliable approach as network_assessment_tool
+            # For localhost, just copy script to /tmp and execute via shell
             if config.cluster_host == "localhost":
                 try:
                     os.chmod(script_path_on_disk, 0o755)
+                    # Copy script to standard location
+                    import shutil
+                    shutil.copy2(script_path_on_disk, "/tmp/node_assessment.sh")
+                    os.chmod("/tmp/node_assessment.sh", 0o755)
                 except Exception:
                     pass
-                # Try to match the user's exact working command by using relative path
-                relative_script = "examples/factory_reset/scripts/node_assessment.sh"
-                project_root = Path(__file__).resolve().parents[4]  # Go up to project root
-                cmd = f"/bin/bash {relative_script}"
 
-                logger.info(f"🔧 DEBUG: About to run command: {cmd}")
-                logger.info(f"🔧 DEBUG: Project root: {project_root}")
-                logger.info(f"🔧 DEBUG: Current working dir: {os.getcwd()}")
-                logger.info(f"🔧 DEBUG: Script exists (abs): {os.path.exists(script_path_on_disk)}")
-                logger.info(
-                    f"🔧 DEBUG: Script exists (rel): {os.path.exists(os.path.join(project_root, relative_script))}")
-
-                proc = await asyncio.create_subprocess_shell(
-                    cmd,
+                # Execute using simple shell command (like network tool)
+                cmd = ["/bin/bash", "/tmp/node_assessment.sh"]
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT,
-                    env=os.environ.copy(),
-                    cwd=str(project_root),  # Run from project root like user did
+                    stderr=asyncio.subprocess.PIPE,
                 )
-                logger.info(f"🔧 DEBUG: Subprocess created, PID: {proc.pid}")
-
-                # Add a short timeout first to see if process starts
                 try:
-                    logger.info("🔧 DEBUG: Waiting for subprocess to complete...")
-                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
-                    logger.info(f"🔧 DEBUG: Subprocess completed, return code: {proc.returncode}")
-                    logger.info(f"🔧 DEBUG: Output length: {len(stdout) if stdout else 0} bytes")
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
                 except asyncio.TimeoutError:
                     try:
                         proc.kill()
@@ -146,21 +134,31 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                     except Exception:
                         pass
                     return f"❌ Local assessment timed out after {config.timeout}s"
-                s_out = (stdout or b"").decode("utf-8", errors="replace")
-                if proc.returncode != 0:
-                    return f"❌ Local assessment failed (exit code {proc.returncode}):\n{s_out.strip()}"
-                lines = [ln for ln in s_out.strip().splitlines() if ln.strip()]
-                if not lines:
-                    return "❌ Local assessment produced no output"
-                outdir = None
-                for ln in reversed(lines):
-                    m = re.search(r"(/tmp/node_assessment_[0-9_]+)", ln)
-                    if m:
-                        outdir = m.group(1)
-                        break
-                if not outdir:
-                    outdir = lines[-1].strip()
-                return f"✅ Node assessment complete. Results in: {outdir}"
+
+                # Clean up
+                try:
+                    os.unlink("/tmp/node_assessment.sh")
+                except Exception:
+                    pass
+
+                if proc.returncode == 0:
+                    s_out = stdout.decode("utf-8", errors="replace")
+                    lines = [ln for ln in s_out.strip().splitlines() if ln.strip()]
+                    outdir = None
+                    for ln in reversed(lines):
+                        m = re.search(r"(/tmp/node_assessment_[0-9_]+)", ln)
+                        if m:
+                            outdir = m.group(1)
+                            break
+                    if not outdir and lines:
+                        outdir = lines[-1].strip()
+                    return (f"✅ Node assessment completed successfully!\n\n"
+                            f"📋 Assessment Output:\n{s_out.strip()}\n\n"
+                            f"📁 Results saved in: {outdir}\n"
+                            f"Use node_results_reader to analyze the detailed results.")
+                else:
+                    s_err = stderr.decode("utf-8", errors="replace")
+                    return f"❌ Local assessment failed:\n{s_err.strip()}"
 
             # Remote upload and run
             scp_cmd = [
