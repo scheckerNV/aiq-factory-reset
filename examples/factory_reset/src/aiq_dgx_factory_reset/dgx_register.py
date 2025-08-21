@@ -112,13 +112,14 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                     os.chmod(script_path_on_disk, 0o755)
                 except Exception:
                     pass
-                proc = await asyncio.create_subprocess_exec(
-                    "/bin/bash",
-                    script_path_on_disk,
+                # Use the exact same command format that works when run manually
+                cmd = f"/bin/bash {script_path_on_disk}"
+                proc = await asyncio.create_subprocess_shell(
+                    cmd,
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT,  # Merge stderr into stdout
-                    env=os.environ.copy(),  # Inherit full environment
-                    cwd=os.getcwd(),  # Use current working directory
+                    stderr=asyncio.subprocess.STDOUT,
+                    env=os.environ.copy(),
+                    cwd=os.getcwd(),
                 )
                 try:
                     stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
