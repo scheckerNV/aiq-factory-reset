@@ -554,8 +554,13 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     async def generate_commands(state: OrchestratorState):
         if not bcm_rag:
             return state
-        context = ("ASSESSMENT:\n" + (state.get("assessment", "") or "") + "\n\n" + "REACT_AGENT_PLAN:\n" +
-                   (state.get("react_agent_output", "") or ""))
+        # Acquire LLM only when needed for command generation
+        try:
+            reasoning_llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+        except Exception as e:
+            return {**state, "bcm_commands": f"❌ Could not acquire LLM: {str(e)}"}
+        context = ("ASSESSMENT:\n" + (state.get("assessment", "") or "") + "\n\nANALYSIS:\n" +
+                   (state.get("analysis", "") or ""))
         try:
             chain_for_cmds = commands_prompt | reasoning_llm | StrOutputParser()
             bcm_query = await asyncio.wait_for(chain_for_cmds.ainvoke({"context": context}), timeout=LLM_STEP_TIMEOUT)
@@ -612,21 +617,13 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                  "No BCM commands were generated or executed as this was a diagnostics-only request.\n")
         return {**state, "final_output": final}
 
-    # Smart routing based on LLM decision analysis
+    # Smart routing based on regex
     def route_after_analysis(state: OrchestratorState):
-        """Route based on LLM decision from analysis phase"""
-        # Prefer the parsed/stored action_type with a safe default
         action_type = state.get("action_type", "diagnostics_only")
-
-        # Route based on LLM decision
-        routing_map = {
-            "none": "synthesize",  # Skip all action steps
-            "diagnostics_only": "react_agent",  # Run agent but skip execution
-            "generate_bcm_commands": "react_agent",  # Normal flow
-            "reset_nodes": "react_agent"  # Normal flow (could add special handling)
-        }
-
-        route = routing_map.get(action_type, "react_agent")
+        if action_type in ("generate_bcm_commands", "reset_nodes"):
+            route = "generate"
+        else:
+            route = "synthesize_diagnostics_only"
         logger.info("Orchestrator routing decision: %s -> %s", action_type, route)
         return route
 
@@ -650,8 +647,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     graph.add_node("synthesize", synthesize)
     graph.add_node("synthesize_diagnostics_only", synthesize_diagnostics_only)
 
-    graph.set_entry_point("assess")
-    graph.add_edge("assess", "analyze")
+    graph.set_entry_point("analyze")
 
     # Route directly from analyze to either generate or diagnostics-only synthesis
     graph.add_conditional_edges("analyze",
