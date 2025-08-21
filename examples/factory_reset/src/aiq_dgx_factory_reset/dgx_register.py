@@ -15,8 +15,6 @@ import shlex
 from pathlib import Path
 from typing import TypedDict
 
-from filelock import FileLock
-from filelock import Timeout as FileLockTimeout
 from pydantic import Field
 
 from aiq.builder.builder import Builder
@@ -77,104 +75,9 @@ class DGXExpertRAGConfig(FunctionBaseConfig, name="dgx_expert_rag"):
 async def dgx_expert_rag(config: DGXExpertRAGConfig, _builder: Builder):
 
     async def _search_dgx_docs(query: str) -> str:
-        if not os.path.exists(config.docs_path):
-            return f"❌ DGX documentation not found at {config.docs_path}"
-
-        prev_api: str | None = None
-        try:
-            from llama_index.core import Document
-            from llama_index.core import ServiceContext
-            from llama_index.core import StorageContext
-            from llama_index.core import VectorStoreIndex
-            from llama_index.core import load_index_from_storage
-            from llama_index.embeddings.nvidia import NVIDIAEmbedding
-            from llama_index.llms.nvidia import NVIDIA
-
-            nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
-            if not nvidia_api_key:
-                return ("❌ NVIDIA API key not provided. Set NVIDIA_API_KEY environment variable or provide in config.")
-            prev_api = os.environ.get("NVIDIA_API_KEY")
-            os.environ["NVIDIA_API_KEY"] = nvidia_api_key
-
-            llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
-            embed = NVIDIAEmbedding(model="nvidia/llama-3.2-nv-embedqa-1b-v2", truncate="END")
-            service_context = ServiceContext.from_defaults(llm=llm, embed_model=embed)
-
-            docs_path_obj = Path(config.docs_path)
-            docstore_path = os.path.join(config.persist_dir, "docstore.json")
-            lock_path = Path(config.persist_dir) / ".index.lock"
-            os.makedirs(config.persist_dir, exist_ok=True)
-            lock = FileLock(str(lock_path), timeout=10)
-            try:
-                await asyncio.to_thread(lock.acquire)
-                try:
-                    if os.path.exists(docstore_path):
-                        storage_context = StorageContext.from_defaults(persist_dir=config.persist_dir)
-                        index = await asyncio.to_thread(load_index_from_storage, storage_context)
-                    else:
-                        documents: list[Document] = []
-                        for md_file in docs_path_obj.rglob("*.md"):
-                            try:
-                                content = await asyncio.to_thread(md_file.read_text, encoding="utf-8")
-                                documents.append(
-                                    Document(
-                                        text=content,
-                                        metadata={
-                                            "source": str(md_file), "file_name": md_file.name
-                                        },
-                                    ))
-                            except Exception as e:  # noqa: BLE001
-                                logger.warning("Failed to read %s: %s", md_file, e)
-
-                        if not documents:
-                            return f"❌ No DGX documentation files found in {config.docs_path}"
-
-                        index = await asyncio.to_thread(
-                            lambda: VectorStoreIndex.from_documents(documents, service_context=service_context))
-                        await asyncio.to_thread(index.storage_context.persist, config.persist_dir)
-                finally:
-                    try:
-                        lock.release()
-                    except Exception:
-                        pass
-            except FileLockTimeout:
-                logger.warning("DGX RAG index lock timeout; skipping build and attempting load-only")
-                try:
-                    storage_context = StorageContext.from_defaults(persist_dir=config.persist_dir)
-                    index = await asyncio.to_thread(load_index_from_storage, storage_context)
-                except Exception:
-                    return "❌ RAG index is locked or unavailable; try again later."
-
-            query_engine = index.as_query_engine(similarity_top_k=config.similarity_top_k,
-                                                 response_mode=config.response_mode,
-                                                 verbose=True)
-            response = await asyncio.to_thread(query_engine.query, query)
-
-            result = "🤖 DGX Documentation Expert\n\n"
-            result += f"Query: {query}\n\n"
-            result += f"Answer:\n{str(response)}\n\n"
-
-            if hasattr(response, "source_nodes") and response.source_nodes:
-                result += "Sources:\n"
-                for i, node in enumerate(response.source_nodes[:3], 1):
-                    source = node.metadata.get("file_name", "Unknown")
-                    score = getattr(node, "score", None)
-                    score_str = f" ({score:.3f})" if isinstance(score, float) else ""
-                    result += f"{i}. {source}{score_str}\n"
-            return result
-        except Exception as e:  # noqa: BLE001
-            logger.error("Error in DGX documentation search: %s", e)
-            return f"❌ Error in DGX analysis: {str(e)}"
-        finally:
-            # Restore prior API key if it existed
-            try:
-                if 'prev_api' in locals():
-                    if prev_api is None:
-                        os.environ.pop("NVIDIA_API_KEY", None)
-                    else:
-                        os.environ["NVIDIA_API_KEY"] = prev_api
-            except Exception:
-                pass
+        # Minimal mode: disable heavy RAG to avoid blocking and complexity during bring-up
+        return ("DGX Documentation RAG disabled (minimal workflow mode).\n"
+                f"Query: {query}")
 
     yield FunctionInfo.from_fn(_search_dgx_docs,
                                description="DGX hardware operational guidance and procedures (RAG over DGX docs)")
@@ -476,7 +379,6 @@ class DGXOrchestratorConfig(FunctionBaseConfig, name="dgx_orchestrator"):
 async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     from langchain_core.output_parsers import StrOutputParser
     from langchain_core.prompts import PromptTemplate
-    from langchain_core.runnables import RunnablePassthrough
     from langgraph.graph import END
     from langgraph.graph import StateGraph
 
@@ -500,30 +402,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     except Exception:
         executor = None
 
-    # Prompts
-    decide_prompt = PromptTemplate.from_template("""
-        You are the DGX Orchestrator. Analyze the current request and the node assessment data.
-
-        Request: {request}
-
-        Assessment Summary (may be empty):
-        {assessment}
-
-        Decide what action is needed. Choose action_type based on request intent:
-        - "none": Request is informational only, no analysis needed
-        - "diagnostics_only": Request asks for STATUS/STATE analysis
-          (e.g., "current state", "health check", "what's wrong")
-        - "generate_bcm_commands": Request asks to PERFORM actions
-          (e.g., "reset nodes", "reimage", "fix issues")
-        - "reset_nodes": Request specifically asks for factory reset
-
-        STRICT FORMAT INSTRUCTIONS:
-        - Return ONLY a single JSON object with the following keys exactly:
-          {"rationale": ["...", "..."], "action_needed": true/false,
-           "action_type": "one_of: none|diagnostics_only|generate_bcm_commands|reset_nodes",
-           "focus": "short string"}
-        - Do not include any markdown, code fences, or extra commentary. JSON only.
-        """)
+    # No decision prompt in minimal mode; regex-based routing only
 
     commands_prompt = PromptTemplate.from_template("""
         You are a BCM expert. Based on the assessment and DGX guidance, generate exact Bright Cluster Manager commands
@@ -584,53 +463,10 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             except Exception:
                 reader_out = ""
 
-        # === PASS 1: Initial classification with a neutral query ===
-        chain_initial = ({
-            "request": RunnablePassthrough(),
-            "assessment": lambda _: reader_out or state.get("assessment", ""),
-        } | decide_prompt | reasoning_llm | StrOutputParser())
-
-        try:
-            decision_json = await asyncio.wait_for(chain_initial.ainvoke(state.get("input", "")),
-                                                   timeout=LLM_STEP_TIMEOUT)
-        except asyncio.TimeoutError:
-            decision_json = ("{\"rationale\": [\"timeout\"], \"action_needed\": false, "
-                             "\"action_type\": \"diagnostics_only\", \"focus\": \"\"}")
-        except Exception:
-            decision_json = ("{\"rationale\": [\"LLM error\"], \"action_needed\": false, "
-                             "\"action_type\": \"diagnostics_only\", \"focus\": \"\"}")
-
-        # Parse JSON (robust)
-        extracted_json = decision_json
+        # === Minimal classification: regex-only ===
+        extracted_json = "{}"
         action_type = "diagnostics_only"
         decision_obj = None
-        try:
-            decision_obj = _json.loads(decision_json)
-            action_type = decision_obj.get("action_type", action_type)
-        except Exception:
-            # Attempt to extract JSON substring
-            try:
-                start_idx = decision_json.find('{"')
-                if start_idx == -1:
-                    start_idx = decision_json.find("{'")
-                if start_idx != -1:
-                    brace_count = 0
-                    end_idx = None
-                    for i, ch in enumerate(decision_json[start_idx:], start_idx):
-                        if ch == '{':
-                            brace_count += 1
-                        elif ch == '}':
-                            brace_count -= 1
-                            if brace_count == 0:
-                                end_idx = i + 1
-                                break
-                    if end_idx:
-                        extracted_json = decision_json[start_idx:end_idx]
-                        decision_obj = _json.loads(extracted_json.replace("'", '"'))
-                        action_type = decision_obj.get("action_type", action_type)
-            except Exception:
-                # leave action_type as default
-                pass
 
         # === Deterministic overrides (user input only with tighter regex) ===
         user_input = (state.get("input", "") or "")
@@ -673,7 +509,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                 logger.info("Orchestrator clamp: no explicit user action intent -> action_type='diagnostics_only'")
                 action_type = "diagnostics_only"
 
-        # === PASS 2: Conditional RAG enrichment ===
+        # === Conditional DGX RAG enrichment (reset-only) ===
         dgx_guidance = ""
         if action_type in ("generate_bcm_commands", "reset_nodes") and dgx_rag:
             try:
@@ -686,9 +522,10 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             except Exception:
                 dgx_guidance = ""
 
-        # Compose analysis report (store extracted decision JSON if possible)
-        analysis_report = ("### Reasoning\n" + (extracted_json or decision_json) + "\n\n" +
-                           (reader_out[:1500] if reader_out else "") + "\n\n" + dgx_guidance)
+        # Compose analysis report (minimal)
+        analysis_report = ("### Reasoning\n"
+                           f"Detected action_type: {action_type}\n\n" + (reader_out[:1500] if reader_out else "") +
+                           "\n\n" + dgx_guidance)
 
         # If LLM returned a parsed object, keep it; otherwise synthesize a short JSON for traceability
         if decision_obj is None:
@@ -702,54 +539,17 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                     "focus": ""
                 }
 
-        # Ensure reported action_type matches any overrides
-        decision_obj["action_type"] = action_type
-        decision_json_out = _json.dumps(decision_obj)
+        # Minimal decision JSON
+        decision_json_out = _json.dumps({
+            "rationale": ["regex-based classification"],
+            "action_needed": action_type != "diagnostics_only",
+            "action_type": action_type,
+            "focus": ""
+        })
 
         return {**state, "analysis": analysis_report, "action_type": action_type, "decision_json": decision_json_out}
 
-    async def run_react_agent(state: OrchestratorState):
-        """
-        Run the DGX ReAct agent with context tailored to the action_type.
-        - For reset_nodes: include full reasoning analysis.
-        - For other cases: provide neutral, task-appropriate context without
-        factory reset framing to avoid bias.
-        """
-        try:
-            react_agent_tool = builder.get_tool(fn_name=config.react_agent_fn, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
-        except Exception as e:
-            return {**state, "react_agent_output": f"❌ DGX ReAct agent not found: {str(e)}"}
-
-        action_type = state.get("action_type", "diagnostics_only")
-
-        # ==== Context selection based on action type ====
-        if action_type == "reset_nodes":
-            # Keep full detailed reasoning & reset guidance
-            react_input = (f"Original request: {state.get('input', '')}\n\n"
-                           f"{state.get('analysis', '')}\n\n"
-                           "You are the DGX ReAct Agent. This is a FACTORY RESET request. "
-                           "Call tools as needed (DGX/BCM RAG, assessment reader) to determine the exact steps "
-                           "and produce a precise, safe execution plan.")
-        else:
-            # Neutral diagnostic/action planning without reset framing
-            react_input = (f"Original request: {state.get('input', '')}\n\n"
-                           "You are the DGX ReAct Agent. Focus on diagnosing the current DGX/SuperPOD state, "
-                           "summarizing results, and providing action recommendations ONLY if clearly requested. "
-                           "Avoid assuming a factory reset unless explicitly stated in the request.")
-
-            # Optionally add first 1.5k chars of assessment/summary if available
-            if state.get("assessment"):
-                react_input += "\n\nNode Assessment Summary:\n" + state.get("assessment", "")[:1500]
-
-        # ==== Invoke the agent ====
-        try:
-            out = await asyncio.wait_for(react_agent_tool.ainvoke(react_input), timeout=LLM_STEP_TIMEOUT)
-        except asyncio.TimeoutError:
-            out = f"❌ DGX ReAct agent timed out after {LLM_STEP_TIMEOUT}s"
-        except Exception as e:
-            out = f"❌ DGX ReAct agent error: {str(e)}"
-
-        return {**state, "react_agent_output": out}
+    # ReAct agent removed in minimal workflow
 
     async def generate_commands(state: OrchestratorState):
         if not bcm_rag:
@@ -845,7 +645,6 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     graph = StateGraph(OrchestratorState)
     graph.add_node("assess", assess_node)
     graph.add_node("analyze", analyze_and_decide)
-    graph.add_node("react_agent", run_react_agent)
     graph.add_node("generate", generate_commands)
     graph.add_node("execute", execute_commands)
     graph.add_node("synthesize", synthesize)
@@ -854,23 +653,12 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     graph.set_entry_point("assess")
     graph.add_edge("assess", "analyze")
 
-    # Key change: Multiple routing options from analyze
-    graph.add_conditional_edges(
-        "analyze",
-        route_after_analysis,
-        {
-            "react_agent": "react_agent",  # Normal flow or diagnostics
-            "synthesize": "synthesize"  # Skip all actions (action_type="none")
-        })
-
-    # Add conditional routing after react_agent based on original decision
-    graph.add_conditional_edges(
-        "react_agent",
-        route_after_react_agent,
-        {
-            "generate": "generate",  # Normal flow
-            "synthesize_diagnostics_only": "synthesize_diagnostics_only"  # Diagnostics only
-        })
+    # Route directly from analyze to either generate or diagnostics-only synthesis
+    graph.add_conditional_edges("analyze",
+                                route_after_analysis, {
+                                    "generate": "generate",
+                                    "synthesize_diagnostics_only": "synthesize_diagnostics_only",
+                                })
 
     graph.add_edge("generate", "execute")
     graph.add_edge("execute", "synthesize")
