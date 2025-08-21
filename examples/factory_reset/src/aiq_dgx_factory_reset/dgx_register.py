@@ -116,10 +116,12 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                     "/bin/bash",
                     script_path_on_disk,
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,  # Merge stderr into stdout
+                    env=os.environ.copy(),  # Inherit full environment
+                    cwd=os.getcwd(),  # Use current working directory
                 )
                 try:
-                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
                 except asyncio.TimeoutError:
                     try:
                         proc.kill()
@@ -128,9 +130,8 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                         pass
                     return f"❌ Local assessment timed out after {config.timeout}s"
                 s_out = (stdout or b"").decode("utf-8", errors="replace")
-                s_err = (stderr or b"").decode("utf-8", errors="replace")
                 if proc.returncode != 0:
-                    return ("❌ Local assessment failed:\n" + s_err.strip() + "\n" + s_out.strip())
+                    return f"❌ Local assessment failed (exit code {proc.returncode}):\n{s_out.strip()}"
                 lines = [ln for ln in s_out.strip().splitlines() if ln.strip()]
                 if not lines:
                     return "❌ Local assessment produced no output"

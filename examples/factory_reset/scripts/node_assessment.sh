@@ -11,14 +11,23 @@ run_cmd() {
   local cmd="$1"
   local output_file="$2"
   local description="$3"
+  local timeout_seconds="${4:-30}"  # Default 30 second timeout
   echo "[$description] Running: $cmd"
   {
     echo "Command: $cmd"
     echo "Description: $description"
     echo "Timestamp: $(date)"
+    echo "Timeout: ${timeout_seconds}s"
     echo "====================================="
     echo
-    eval "$cmd" 2>&1 || echo "Command failed with exit code $?"
+    timeout "$timeout_seconds" bash -c "$cmd" 2>&1 || {
+      local exit_code=$?
+      if [ $exit_code -eq 124 ]; then
+        echo "Command timed out after ${timeout_seconds} seconds"
+      else
+        echo "Command failed with exit code $exit_code"
+      fi
+    }
     echo
   } > "$OUTPUT_DIR/$output_file"
 }
@@ -55,12 +64,14 @@ run_cmd 'cmsh -c "device hardwareprofile list"' \
 # Use foreach with specific node type instead of wildcard
 run_cmd 'cmsh -c "device foreach -t physicalnode (cat /etc/os-release | grep ^VERSION)"' \
         "20_os_versions.txt" \
-        "OS versions across physical nodes"
+        "OS versions across physical nodes" \
+        90
 
 # 5) BIOS information
 run_cmd 'cmsh -c "device foreach -t physicalnode (dmidecode -s bios-version)"' \
         "21_bios_versions.txt" \
-        "BIOS versions across nodes"
+        "BIOS versions across nodes" \
+        90
 
 # 6) Firmware management
 run_cmd 'cmsh -c "device firmware info"' \
@@ -81,7 +92,8 @@ run_cmd 'cmsh -c "device use node001; biossettings; status 2>/dev/null || echo \
 # 8) BMC status check using ipmitool
 run_cmd 'cmsh -c "device foreach -t physicalnode (ipmitool mc info 2>/dev/null || echo \"BMC not accessible on this node\")"' \
         "24_bmc_info.txt" \
-        "BMC information where accessible"
+        "BMC information where accessible" \
+        120
 
 # 9) Device health overview
 run_cmd 'cmsh -c "device overview"' \
