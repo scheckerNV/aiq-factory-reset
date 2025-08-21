@@ -22,7 +22,7 @@ functions:
     _type: aiq_dgx_factory_reset/node_assessment_tool
     cluster_host: "localhost"
     cluster_user: "root"
-    timeout: 180
+    timeout: 300
 
   # Read results of node assessment
   node_results_reader:
@@ -77,56 +77,50 @@ llms:
     max_tokens: 4096
     temperature: 0.1
 
-# workflow:
-#   _type: reasoning_agent
-#   llm_name: reasoning_llm
-#   augmented_fn: dgx_orchestrator
-#   verbose: true
-#   reasoning_prompt_template: |
-#     <think>
-#     You are analyzing a DGX SuperPOD request.
-
-#     Determine if it is:
-#     - A diagnostic/status request (information only)
-#     - An action/execution request (changes to be made)
-#     - A factory reset request (requires full reset of nodes)
-
-#     For all requests, identify:
-#     1. CONTEXT ANALYSIS:
-#        - DGX components or nodes involved
-#        - Any network segments mentioned
-#        - Clues about the user's intent
-
-#     2. INFORMATION REQUIREMENTS:
-#        - Documentation, procedures, or prior results needed
-#        - Current node or cluster state information required
-
-#     3. OUTPUT PLANNING:
-#        - For diagnostics: summarize observed state and provide recommendations
-#        - For general actions: list commands / changes needed
-#        - (If classified as reset_nodes, the Orchestrator will insert additional reset-specific planning later)
-#     </think>
-
-#     You are analyzing a DGX SuperPOD request. Classify it accordingly and give a concise, actionable plan.
-#     Avoid assuming a reset unless the request explicitly indicates it.
-#   instruction_prompt_template: |
-#     Based on the analysis above, this is the reasoning analysis:
-
-#     REASONING ANALYSIS:
-#     {reasoning_output}
-
-#     ORIGINAL REQUEST: {input_text}
-
-#     INSTRUCTIONS:
-#     Use your DGX SuperPOD expertise and available tools to address the request.
-#     1. For diagnostics: gather relevant data, summarize state, provide recommendations.
-#     2. For actions: determine safe sequence, validation, and execution steps.
-#     3. If the Orchestrator classifies this as a reset_nodes request, additional reset-specific steps will follow.
-
-#     Ensure guidance is clear, accurate, and best-practice aligned for DGX SuperPOD environments.
-
 workflow:
-  _type: aiq_dgx_factory_reset/dgx_orchestrator
-  reasoning_llm_name: reasoning_llm
-  executor_fn: bcm_executor
+  _type: reasoning_agent
+  llm_name: reasoning_llm
+  augmented_fn: dgx_orchestrator
   verbose: true
+  reasoning_prompt_template: |
+    <think>
+    You are analyzing a DGX SuperPOD request.
+
+    Determine if it is:
+    - A diagnostic/status request (information only)
+    - An action/execution request (changes to be made)
+    - A factory reset request (requires full reset of nodes)
+
+    For all requests, identify:
+    1. CONTEXT ANALYSIS:
+       - DGX components or nodes involved
+       - Any network segments mentioned
+       - Clues about the user's intent
+
+    2. INFORMATION REQUIREMENTS:
+       - Documentation, procedures, or prior results needed
+       - Current node or cluster state information required
+
+    3. OUTPUT PLANNING:
+       - For diagnostics: summarize observed state and provide recommendations
+       - For general actions: list commands / changes needed
+       - (If classified as reset_nodes, the Orchestrator will insert additional reset-specific planning later)
+    </think>
+
+    You are analyzing a DGX SuperPOD request. Classify it accordingly and give a concise, actionable plan.
+    Avoid assuming a reset unless the request explicitly indicates it.
+  instruction_prompt_template: |
+    Based on the analysis above, this is the reasoning analysis:
+
+    REASONING ANALYSIS:
+    {reasoning_output}
+
+    ORIGINAL REQUEST: {input_text}
+
+    INSTRUCTIONS:
+    Use your DGX SuperPOD expertise and available tools to address the request.
+    1. For diagnostics: gather relevant data, summarize state, provide recommendations.
+    2. For actions: determine safe sequence, validation, and execution steps.
+    3. If the Orchestrator classifies this as a reset_nodes request, additional reset-specific steps will follow.
+
+    Ensure guidance is clear, accurate, and best-practice aligned for DGX SuperPOD environments.
