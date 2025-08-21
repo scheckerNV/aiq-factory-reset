@@ -10,6 +10,8 @@ return final result with reasoning steps.
 import asyncio
 import logging
 import os
+import re
+import shlex
 from pathlib import Path
 from typing import TypedDict
 
@@ -22,6 +24,30 @@ from aiq.cli.register_workflow import register_function
 from aiq.data_models.function import FunctionBaseConfig
 
 logger = logging.getLogger(__name__)
+
+# Default timeouts and limits
+REMOTE_CMD_TIMEOUT = 120
+LOCAL_CMD_TIMEOUT = 300
+LLM_STEP_TIMEOUT = 90
+MAX_FILE_READ_CHARS = 262_144  # 256 KiB approx
+
+
+def _truncate_text(text: str, limit: int = MAX_FILE_READ_CHARS) -> str:
+    if not isinstance(text, str):
+        return text
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n...[truncated]...\n"
+
+
+def _extract_cmsh_commands(text: str) -> list[str]:
+    cmds: list[str] = []
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if s.startswith('cmsh -c "') and s.endswith('"'):
+            cmds.append(s)
+    return cmds
+
 
 # ========================
 # DGX Documentation RAG Tool
@@ -46,81 +72,12 @@ class DGXExpertRAGConfig(FunctionBaseConfig, name="dgx_expert_rag"):
 
 
 @register_function(config_type=DGXExpertRAGConfig)
-async def dgx_expert_rag(config: DGXExpertRAGConfig, _builder: Builder):
+async def dgx_expert_rag(config: DGXExpertRAGConfig, _builder: Builder):  # noqa: ARG001
 
     async def _search_dgx_docs(query: str) -> str:
-        if not os.path.exists(config.docs_path):
-            return f"❌ DGX documentation not found at {config.docs_path}"
-
-        try:
-            from llama_index.core import Document
-            from llama_index.core import Settings
-            from llama_index.core import StorageContext
-            from llama_index.core import VectorStoreIndex
-            from llama_index.core import load_index_from_storage
-            from llama_index.embeddings.nvidia import NVIDIAEmbedding
-            from llama_index.llms.nvidia import NVIDIA
-
-            nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
-            if not nvidia_api_key:
-                return ("❌ NVIDIA API key not provided. Set NVIDIA_API_KEY environment variable or provide in config.")
-            os.environ["NVIDIA_API_KEY"] = nvidia_api_key
-
-            Settings.llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
-            Settings.embed_model = NVIDIAEmbedding(model="nvidia/llama-3.2-nv-embedqa-1b-v2", truncate="END")
-
-            docs_path_obj = Path(config.docs_path)
-            docstore_path = os.path.join(config.persist_dir, "docstore.json")
-            if os.path.exists(docstore_path):
-                storage_context = StorageContext.from_defaults(persist_dir=config.persist_dir)
-                index = load_index_from_storage(storage_context)
-            else:
-                os.makedirs(config.persist_dir, exist_ok=True)
-                documents: list[Document] = []
-
-                # Markdown
-                for md_file in docs_path_obj.glob("*.md"):
-                    try:
-                        documents.append(
-                            Document(
-                                text=md_file.read_text(encoding="utf-8"),
-                                metadata={
-                                    "source": str(md_file), "file_name": md_file.name
-                                },
-                            ))
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("Failed to read %s: %s", md_file, e)
-
-                # PDFs: optional (skipped if LlamaParse not configured)
-                # for pdf_file in docs_path_obj.glob("*.pdf"):
-                #     pass
-
-                if not documents:
-                    return f"❌ No DGX documentation files found in {config.docs_path}"
-
-                index = VectorStoreIndex.from_documents(documents)
-                index.storage_context.persist(persist_dir=config.persist_dir)
-
-            query_engine = index.as_query_engine(similarity_top_k=config.similarity_top_k,
-                                                 response_mode=config.response_mode,
-                                                 verbose=True)
-            response = query_engine.query(query)
-
-            result = "🤖 DGX Documentation Expert\n\n"
-            result += f"Query: {query}\n\n"
-            result += f"Answer:\n{str(response)}\n\n"
-
-            if hasattr(response, "source_nodes") and response.source_nodes:
-                result += "Sources:\n"
-                for i, node in enumerate(response.source_nodes[:3], 1):
-                    source = node.metadata.get("file_name", "Unknown")
-                    score = getattr(node, "score", None)
-                    score_str = f" ({score:.3f})" if isinstance(score, float) else ""
-                    result += f"{i}. {source}{score_str}\n"
-            return result
-        except Exception as e:  # noqa: BLE001
-            logger.error("Error in DGX documentation search: %s", e)
-            return f"❌ Error in DGX analysis: {str(e)}"
+        # Minimal mode: disable heavy RAG to avoid blocking and complexity during bring-up
+        return ("DGX Documentation RAG disabled (minimal workflow mode).\n"
+                f"Query: {query}")
 
     yield FunctionInfo.from_fn(_search_dgx_docs,
                                description="DGX hardware operational guidance and procedures (RAG over DGX docs)")
@@ -142,20 +99,15 @@ class NodeAssessmentToolConfig(FunctionBaseConfig, name="node_assessment_tool"):
 @register_function(config_type=NodeAssessmentToolConfig)
 async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Builder):
 
-    async def _run_node_assessment(input_text: str) -> str:
+    async def _run_node_assessment(input_text: str) -> str:  # noqa: ARG001
         """Upload and execute the dedicated node_assessment.sh script; return results dir."""
         try:
-            script_path_on_disk = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                "scripts",
-                "node_assessment.sh",
-            )
+            script_path_on_disk = str(Path(__file__).resolve().parents[2] / "scripts" / "node_assessment.sh")
             if not os.path.exists(script_path_on_disk):
                 return f"❌ node_assessment.sh not found at {script_path_on_disk}"
 
-            # Local run
+            # Local run (simple: inherit env, bash script directly)
             if config.cluster_host == "localhost":
-                # Ensure script is executable and run via bash to avoid exec perms issues
                 try:
                     os.chmod(script_path_on_disk, 0o755)
                 except Exception:
@@ -166,40 +118,96 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
+                try:
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
+                except asyncio.TimeoutError:
+                    try:
+                        proc.kill()
+                        await proc.wait()
+                    except Exception:
+                        pass
+                    return f"❌ Local assessment timed out after {config.timeout}s"
+                s_out = (stdout or b"").decode("utf-8", errors="replace")
+                s_err = (stderr or b"").decode("utf-8", errors="replace")
                 if proc.returncode != 0:
-                    # Include stdout as well since some tools write errors to stdout
-                    return ("❌ Local assessment failed:\n" + (stderr.decode('utf-8') or '').strip() + "\n" +
-                            (stdout.decode('utf-8') or '').strip())
-                outdir = stdout.decode("utf-8").strip().splitlines()[-1]
+                    return ("❌ Local assessment failed:\n" + s_err.strip() + "\n" + s_out.strip())
+                lines = [ln for ln in s_out.strip().splitlines() if ln.strip()]
+                if not lines:
+                    return "❌ Local assessment produced no output"
+                outdir = None
+                for ln in reversed(lines):
+                    m = re.search(r"(/tmp/node_assessment_[0-9_]+)", ln)
+                    if m:
+                        outdir = m.group(1)
+                        break
+                if not outdir:
+                    outdir = lines[-1].strip()
                 return f"✅ Node assessment complete. Results in: {outdir}"
 
             # Remote upload and run
             scp_cmd = [
                 "scp",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                f"ConnectTimeout={min(30, config.timeout)}",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
                 script_path_on_disk,
                 f"{config.cluster_user}@{config.cluster_host}:/tmp/node_assessment.sh",
             ]
             scp_proc = await asyncio.create_subprocess_exec(*scp_cmd,
                                                             stdout=asyncio.subprocess.PIPE,
                                                             stderr=asyncio.subprocess.PIPE)
-            await scp_proc.communicate()
+            try:
+                _, scp_err = await asyncio.wait_for(scp_proc.communicate(), timeout=config.timeout)
+            except asyncio.TimeoutError:
+                try:
+                    scp_proc.kill()
+                except Exception:
+                    pass
+                return "❌ Upload timed out"
             if scp_proc.returncode != 0:
-                return "❌ Failed to upload node assessment script to cluster"
+                err = (scp_err or b"").decode("utf-8", errors="replace")[:500]
+                return f"❌ Failed to upload node assessment script to cluster\n{err}"
 
             ssh_cmd = [
                 "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                f"ConnectTimeout={min(30, config.timeout)}",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
                 f"{config.cluster_user}@{config.cluster_host}",
-                "chmod +x /tmp/node_assessment.sh && /tmp/node_assessment.sh",
+                'bash -lc "chmod +x /tmp/node_assessment.sh && /tmp/node_assessment.sh; '
+                'rc=$?; rm -f /tmp/node_assessment.sh; exit $rc"',
             ]
             proc = await asyncio.create_subprocess_exec(*ssh_cmd,
                                                         stdout=asyncio.subprocess.PIPE,
                                                         stderr=asyncio.subprocess.PIPE)
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                return f"❌ Remote assessment timed out after {config.timeout}s"
             if proc.returncode != 0:
-                return ("❌ Remote assessment failed:\n" + (stderr.decode('utf-8') or '').strip() + "\n" +
-                        (stdout.decode('utf-8') or '').strip())
-            outdir = stdout.decode("utf-8").strip().splitlines()[-1]
+                s_out = (stdout or b"").decode("utf-8", errors="replace")
+                s_err = (stderr or b"").decode("utf-8", errors="replace")
+                return ("❌ Remote assessment failed:\n" + s_err.strip() + "\n" + s_out.strip())
+            s_out = (stdout or b"").decode("utf-8", errors="replace")
+            lines = [ln for ln in s_out.strip().splitlines() if ln.strip()]
+            outdir = None
+            for ln in reversed(lines):
+                m = re.search(r"(/tmp/node_assessment_[0-9_]+)", ln)
+                if m:
+                    outdir = m.group(1)
+                    break
+            if not outdir and lines:
+                outdir = lines[-1].strip()
             return ("✅ Node assessment completed successfully!\n\n"
                     f"📁 Results saved on cluster: {outdir}\n"
                     "Use the node_results_reader tool to analyze the results.")
@@ -303,40 +311,76 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
                 for pat in patterns:
                     for f in latest_dir.glob(pat):
                         try:
-                            results.append(f"📄 {f.name}:\n{f.read_text()}\n{'='*50}\n")
+                            content = await asyncio.to_thread(f.read_text)
+                            results.append(f"📄 {f.name}:\n{_truncate_text(content)}\n{'='*50}\n")
                         except Exception:
                             pass
                 return "\n".join(results) if results else "❌ No results found."
 
             # Remote
+            remote_glob = shlex.quote(config.results_directory)
             latest_dir_cmd = [
                 "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-o",
+                f"ConnectTimeout={min(30, REMOTE_CMD_TIMEOUT)}",
                 f"{config.cluster_user}@{config.cluster_host}",
-                f"ls -td {config.results_directory} 2>/dev/null | head -1",
+                f"bash -lc 'ls -td -- {remote_glob} 2>/dev/null | head -1'",
             ]
             latest_proc = await asyncio.create_subprocess_exec(*latest_dir_cmd,
                                                                stdout=asyncio.subprocess.PIPE,
                                                                stderr=asyncio.subprocess.PIPE)
-            latest_stdout, _ = await latest_proc.communicate()
+            try:
+                latest_stdout, _ = await asyncio.wait_for(latest_proc.communicate(), timeout=REMOTE_CMD_TIMEOUT)
+            except asyncio.TimeoutError:
+                try:
+                    latest_proc.kill()
+                except Exception:
+                    pass
+                return f"❌ Timed out locating latest directory ({REMOTE_CMD_TIMEOUT}s)"
             if latest_proc.returncode != 0 or not latest_stdout.strip():
                 return f"❌ Could not find latest assessment directory matching {config.results_directory}"
             latest_dir = latest_stdout.decode("utf-8").strip()
 
             remote_results: list[str] = []
             for file_pattern in patterns:
+                ld = shlex.quote(latest_dir)
+                pat = shlex.quote(file_pattern)
+                # Build a safe bash -lc command string with quoting and file labels
+                find_cmd = ("bash -lc '"
+                            f"find -- {ld} -name {pat} -print "
+                            "-exec printf \"\\n--- %s ---\\n\" {} \\; "
+                            "-exec cat {} \\;"
+                            "'")
                 ssh_cmd = [
                     "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "StrictHostKeyChecking=accept-new",
+                    "-o",
+                    f"ConnectTimeout={min(30, REMOTE_CMD_TIMEOUT)}",
                     f"{config.cluster_user}@{config.cluster_host}",
-                    f"find {latest_dir} -name '{file_pattern}' -exec cat {{}} \\;",
+                    find_cmd,
                 ]
                 proc = await asyncio.create_subprocess_exec(*ssh_cmd,
                                                             stdout=asyncio.subprocess.PIPE,
                                                             stderr=asyncio.subprocess.PIPE)
-                stdout, _ = await proc.communicate()
+                try:
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=REMOTE_CMD_TIMEOUT)
+                except asyncio.TimeoutError:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    continue
                 if proc.returncode == 0:
                     content = stdout.decode("utf-8")
                     if content.strip():
-                        remote_results.append(f"📄 {file_pattern}:\n{content}\n{'='*50}\n")
+                        remote_results.append(f"📄 {file_pattern}:\n{_truncate_text(content)}\n{'='*50}\n")
             return (f"📊 Node Assessment Results:\n\n{os.linesep.join(remote_results)}"
                     if remote_results else "❌ No assessment results found. Run node_assessment_tool first.")
         except Exception as e:  # noqa: BLE001
@@ -367,13 +411,11 @@ class DGXOrchestratorConfig(FunctionBaseConfig, name="dgx_orchestrator"):
 async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     from langchain_core.output_parsers import StrOutputParser
     from langchain_core.prompts import PromptTemplate
-    from langchain_core.runnables import RunnablePassthrough
     from langgraph.graph import END
     from langgraph.graph import StateGraph
 
     # Acquire handles lazily so registration order doesn't matter
-    reasoning_llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
-
+    # reasoning_llm will be acquired just-in-time in generate_commands
     # Optional tools used directly by the orchestrator
     try:
         node_assess = builder.get_function("node_assessment_tool")
@@ -391,30 +433,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     except Exception:
         executor = None
 
-    # Prompts
-    decide_prompt = PromptTemplate.from_template("""
-        You are the DGX Orchestrator. Analyze the current request and the node assessment data.
-
-        Request: {request}
-
-        Assessment Summary (may be empty):
-        {assessment}
-
-        Decide what action is needed. Choose action_type based on request intent:
-        - "none": Request is informational only, no analysis needed
-        - "diagnostics_only": Request asks for STATUS/STATE analysis
-          (e.g., "current state", "health check", "what's wrong")
-        - "generate_bcm_commands": Request asks to PERFORM actions
-          (e.g., "reset nodes", "reimage", "fix issues")
-        - "reset_nodes": Request specifically asks for factory reset
-
-        STRICT FORMAT INSTRUCTIONS:
-        - Return ONLY a single JSON object with the following keys exactly:
-          {"rationale": ["...", "..."], "action_needed": true/false,
-           "action_type": "one_of: none|diagnostics_only|generate_bcm_commands|reset_nodes",
-           "focus": "short string"}
-        - Do not include any markdown, code fences, or extra commentary. JSON only.
-        """)
+    # No decision prompt in minimal mode; regex-based routing only
 
     commands_prompt = PromptTemplate.from_template("""
         You are a BCM expert. Based on the assessment and DGX guidance, generate exact Bright Cluster Manager commands
@@ -443,10 +462,25 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         if not node_assess:
             return state
         try:
-            assess_out = await node_assess.ainvoke("Run DGX node assessment and save results")
+            assess_out = await asyncio.wait_for(
+                node_assess.ainvoke("Run DGX node assessment and save results"),
+                timeout=state.get("timeout", None) or LOCAL_CMD_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            assess_out = f"❌ Node assessment timed out after {state.get('timeout', None) or LOCAL_CMD_TIMEOUT}s"
         except Exception as e:  # noqa: BLE001
             assess_out = f"❌ Node assessment error: {str(e)}"
-        return {**state, "assessment": assess_out}
+        # Refresh summary after assessment to include latest results
+        refreshed = ""
+        if node_reader:
+            try:
+                refreshed = await asyncio.wait_for(node_reader.ainvoke("summary"), timeout=LOCAL_CMD_TIMEOUT)
+            except Exception:
+                refreshed = ""
+        combined_analysis = (state.get("analysis", "") or "")
+        if refreshed:
+            combined_analysis = (combined_analysis + "\n\n" + refreshed).strip()
+        return {**state, "assessment": assess_out, "analysis": combined_analysis}
 
     async def analyze_and_decide(state: OrchestratorState):
         """
@@ -456,123 +490,76 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         Adds deterministic keyword overrides to ensure reset requests are labeled correctly.
         """
         import json as _json
-        import logging
 
-        logger = logging.getLogger(__name__)
-
-        # Assessment / summary from node_reader
+        # Skip reader call in analyze_and_decide to avoid duplicates
+        # Assessment will be refreshed after node_assessment runs
         reader_out = ""
-        if node_reader:
-            try:
-                reader_out = await node_reader.ainvoke("summary")
-            except Exception:
-                reader_out = ""
 
-        # === PASS 1: Initial classification with a neutral query ===
-        chain_initial = ({
-            "request": RunnablePassthrough(),
-            "assessment": lambda _: reader_out or state.get("assessment", ""),
-        } | decide_prompt | reasoning_llm | StrOutputParser())
-
-        try:
-            decision_json = await chain_initial.ainvoke(state.get("input", ""))
-        except Exception:
-            decision_json = ("{\"rationale\": [\"LLM error\"], \"action_needed\": false, "
-                             "\"action_type\": \"diagnostics_only\", \"focus\": \"\"}")
-
-        # Parse JSON (robust)
-        extracted_json = decision_json
+        # === Minimal classification: regex-only ===
+        extracted_json = "{}"
         action_type = "diagnostics_only"
         decision_obj = None
-        try:
-            decision_obj = _json.loads(decision_json)
-            action_type = decision_obj.get("action_type", action_type)
-        except Exception:
-            # Attempt to extract JSON substring
-            try:
-                start_idx = decision_json.find('{"')
-                if start_idx == -1:
-                    start_idx = decision_json.find("{'")
-                if start_idx != -1:
-                    brace_count = 0
-                    end_idx = None
-                    for i, ch in enumerate(decision_json[start_idx:], start_idx):
-                        if ch == '{':
-                            brace_count += 1
-                        elif ch == '}':
-                            brace_count -= 1
-                            if brace_count == 0:
-                                end_idx = i + 1
-                                break
-                    if end_idx:
-                        extracted_json = decision_json[start_idx:end_idx]
-                        decision_obj = _json.loads(extracted_json.replace("'", '"'))
-                        action_type = decision_obj.get("action_type", action_type)
-            except Exception:
-                # leave action_type as default
-                pass
 
-        # === Deterministic keyword overrides (safety + clarity) ===
-        user_input = (state.get("input", "") or "").lower()
-        reasoning_text = (decision_json or "").lower()
+        # === Deterministic overrides (user input only with tighter regex) ===
+        user_input = (state.get("input", "") or "")
 
-        reset_keywords = [
-            "factory reset",
-            "factory-reset",
-            "reset nodes",
-            "reset node",
-            "wipe nodes",
-            "wipe node",
-            "wipe them",
-            "wipe completely",
-            "wipe all",
-            "wipe data",
-            "wipe",
-            "reimage",
-            "re-image"
-        ]
-        generate_keywords = [
-            "apply",
-            "deploy",
-            "execute",
-            "perform",
-            "create commands",
-            "run commands",
-            "generate bcm",
-            "generate commands",
-            "bcm",
-            "execute bcm",
-            "execute commands"
-        ]
+        reset_regex = re.compile(
+            r"(\bfactory\s*-?\s*reset\b|\bre-?image\b|\bre-?install\b|\bre-?flash\b|\bwipe\b|\bclean\sinstall\b)"
+            r".*\b(node|nodes|cluster|superpod|dgx)\b|"
+            r"\b(node|nodes|cluster|superpod|dgx)\b.*"
+            r"(\bfactory\s*-?\s*reset\b|\bre-?image\b|\bre-?install\b|\bre-?flash\b|\bwipe\b|\bclean\sinstall\b)",
+            re.IGNORECASE,
+        )
+        generate_cmds_regex = re.compile(
+            r"(\bgenerate|\bcreate|\bproduce|\bwrite|\boutput)\b.*\b(commands?|cmsh)\b|"
+            r"\b(commands?|cmsh)\b.*(\bgenerate|\bcreate|\bproduce|\bwrite|\boutput)\b",
+            re.IGNORECASE,
+        )
 
         override_applied = False
-        # If user explicitly requests reset, force reset_nodes
-        if any(k in user_input for k in reset_keywords) or any(k in reasoning_text for k in reset_keywords):
+        if reset_regex.search(user_input):
             if action_type != "reset_nodes":
-                logger.info("Orchestrator override: detected reset keyword -> setting action_type='reset_nodes'")
+                logger.info("Orchestrator override: detected reset intent in user input -> action_type='reset_nodes'")
                 action_type = "reset_nodes"
                 override_applied = True
 
-        # If user clearly requests execution/generation but not reset, prefer generate_bcm_commands
-        if not override_applied and action_type == "diagnostics_only":
-            if any(k in user_input for k in generate_keywords) or any(k in reasoning_text for k in generate_keywords):
-                logger.info(
-                    "Orchestrator override: detected generate keyword -> setting action_type='generate_bcm_commands'")
-                action_type = "generate_bcm_commands"
-                override_applied = True
+        if (not override_applied and action_type == "diagnostics_only" and generate_cmds_regex.search(user_input)):
+            logger.info("Orchestrator override: generate-commands intent -> action_type='generate_bcm_commands'")
+            action_type = "generate_bcm_commands"
+            override_applied = True
 
-        # === PASS 2: Conditional RAG enrichment ===
+        # Explicit diagnostics intent clamp
+        diagnostics_intent_regex = re.compile(
+            r"\b(state|status|health|condition|what.?s\s+the\s+(current\s+)?state|overview|summary|list|show)\b",
+            re.IGNORECASE,
+        )
+        if diagnostics_intent_regex.search(user_input) and action_type != "diagnostics_only":
+            logger.info("Orchestrator clamp: explicit diagnostics intent -> action_type='diagnostics_only'")
+            action_type = "diagnostics_only"
+
+        # Safety floor: if LLM chose actions but user didn't explicitly request
+        if action_type in ("generate_bcm_commands", "reset_nodes"):
+            if not (reset_regex.search(user_input) or generate_cmds_regex.search(user_input)):
+                logger.info("Orchestrator clamp: no explicit user action intent -> action_type='diagnostics_only'")
+                action_type = "diagnostics_only"
+
+        # === Conditional DGX RAG enrichment (reset-only) ===
         dgx_guidance = ""
         if action_type in ("generate_bcm_commands", "reset_nodes") and dgx_rag:
             try:
-                dgx_guidance = await dgx_rag.ainvoke(
-                    "DGX node reset prerequisites and best practices for H100-based SuperPOD.")
+                dgx_guidance = await asyncio.wait_for(
+                    dgx_rag.ainvoke("DGX node reset prerequisites and best practices for H100-based SuperPOD."),
+                    timeout=LLM_STEP_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                dgx_guidance = "❌ DGX guidance RAG timed out"
             except Exception:
                 dgx_guidance = ""
 
-        # Compose analysis report (store extracted decision JSON if possible)
-        analysis_report = ("### Reasoning\n" + (extracted_json or decision_json) + "\n\n" +
-                           (reader_out[:1500] if reader_out else "") + "\n\n" + dgx_guidance)
+        # Compose analysis report (minimal)
+        analysis_report = ("### Reasoning\n"
+                           f"Detected action_type: {action_type}\n\n" + (reader_out[:1500] if reader_out else "") +
+                           "\n\n" + dgx_guidance)
 
         # If LLM returned a parsed object, keep it; otherwise synthesize a short JSON for traceability
         if decision_obj is None:
@@ -586,77 +573,78 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                     "focus": ""
                 }
 
-        # Ensure reported action_type matches any overrides
-        decision_obj["action_type"] = action_type
-        decision_json_out = _json.dumps(decision_obj)
+        # Minimal decision JSON
+        decision_json_out = _json.dumps({
+            "rationale": ["regex-based classification"],
+            "action_needed": action_type != "diagnostics_only",
+            "action_type": action_type,
+            "focus": ""
+        })
 
         return {**state, "analysis": analysis_report, "action_type": action_type, "decision_json": decision_json_out}
 
-    async def run_react_agent(state: OrchestratorState):
-        """
-        Run the DGX ReAct agent with context tailored to the action_type.
-        - For reset_nodes: include full reasoning analysis.
-        - For other cases: provide neutral, task-appropriate context without
-        factory reset framing to avoid bias.
-        """
-        try:
-            react_agent_tool = builder.get_tool(fn_name=config.react_agent_fn, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
-        except Exception as e:
-            return {**state, "react_agent_output": f"❌ DGX ReAct agent not found: {str(e)}"}
-
-        action_type = state.get("action_type", "diagnostics_only")
-
-        # ==== Context selection based on action type ====
-        if action_type == "reset_nodes":
-            # Keep full detailed reasoning & reset guidance
-            react_input = (f"Original request: {state.get('input', '')}\n\n"
-                           f"{state.get('analysis', '')}\n\n"
-                           "You are the DGX ReAct Agent. This is a FACTORY RESET request. "
-                           "Call tools as needed (DGX/BCM RAG, assessment reader) to determine the exact steps "
-                           "and produce a precise, safe execution plan.")
-        else:
-            # Neutral diagnostic/action planning without reset framing
-            react_input = (f"Original request: {state.get('input', '')}\n\n"
-                           "You are the DGX ReAct Agent. Focus on diagnosing the current DGX/SuperPOD state, "
-                           "summarizing results, and providing action recommendations ONLY if clearly requested. "
-                           "Avoid assuming a factory reset unless explicitly stated in the request.")
-
-            # Optionally add first 1.5k chars of assessment/summary if available
-            if state.get("assessment"):
-                react_input += "\n\nNode Assessment Summary:\n" + state.get("assessment", "")[:1500]
-
-        # ==== Invoke the agent ====
-        try:
-            out = await react_agent_tool.ainvoke(react_input)
-        except Exception as e:
-            out = f"❌ DGX ReAct agent error: {str(e)}"
-
-        return {**state, "react_agent_output": out}
+    # ReAct agent removed in minimal workflow
 
     async def generate_commands(state: OrchestratorState):
         if not bcm_rag:
-            return state
-        context = ("ASSESSMENT:\n" + (state.get("assessment", "") or "") + "\n\n" + "REACT_AGENT_PLAN:\n" +
-                   (state.get("react_agent_output", "") or ""))
+            return {**state, "bcm_commands": "❌ BCM RAG tool not available"}
+        # Reacquire LLM only when needed
+        try:
+            reasoning_llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+        except Exception as e:
+            return {**state, "bcm_commands": f"❌ Could not acquire LLM: {str(e)}"}
+
+        # 1) Retrieve BCM guidance (and use any DGX guidance already in state)
+        try:
+            bcm_docs = await asyncio.wait_for(
+                bcm_rag.ainvoke("Provide BCM cmsh-based procedures for DGX node reset/reimage, including exact command "
+                                "patterns for: drain/disable, reinstall OS/image, reset/power cycle, and verification. "
+                                "Keep it concise."),
+                timeout=LLM_STEP_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            bcm_docs = "❌ BCM guidance RAG timed out"
+        except Exception as e:
+            bcm_docs = f"❌ BCM guidance error: {str(e)}"
+
+        dgx_guidance = state.get("dgx_guidance", "")
+        assessment = state.get("assessment", "")
+        analysis = state.get("analysis", "")
+        context = ("ASSESSMENT:\n" + (assessment or "") + "\n\n"
+                   "ANALYSIS:\n" + (analysis or "") + "\n\n"
+                   "DGX GUIDANCE:\n" + (dgx_guidance or "") + "\n\n"
+                   "BCM DOCS:\n" + (bcm_docs or ""))
+
+        # 2) Ask LLM to produce rationale + commands
         try:
             chain_for_cmds = commands_prompt | reasoning_llm | StrOutputParser()
-            bcm_query = await chain_for_cmds.ainvoke({"context": context})
-        except Exception:
-            bcm_query = f"CONTEXT:\n{context}"
-        try:
-            commands_text = await bcm_rag.ainvoke(bcm_query)
-        except Exception as e:  # noqa: BLE001
-            commands_text = f"❌ Command generation error: {str(e)}"
-        return {**state, "bcm_commands": commands_text}
+            llm_out = await asyncio.wait_for(chain_for_cmds.ainvoke({"context": context}), timeout=LLM_STEP_TIMEOUT)
+        except asyncio.TimeoutError:
+            llm_out = f"CONTEXT:\n{context}\n\n[Timed out generating BCM commands]"
+        except Exception as e:
+            llm_out = f"CONTEXT:\n{context}\n\n[Error: {str(e)}]"
+
+        # 3) Extract only safe cmsh lines
+        extracted = _extract_cmsh_commands(llm_out)
+        if not extracted:
+            return {**state, "bcm_commands": "❌ No valid cmsh commands extracted. Skipping execution."}
+
+        commands_payload = "\n".join(extracted)
+        return {**state, "bcm_commands": commands_payload}
 
     async def execute_commands(state: OrchestratorState):
         if not executor:
             return {**state, "execution_result": "ℹ️ No executor configured; skipping execution."}
         cmds = state.get("bcm_commands", "")
-        if not cmds.strip():
-            return {**state, "execution_result": "❌ No commands to execute."}
+        if not cmds.strip() or not all(line.strip().startswith('cmsh -c "') for line in cmds.splitlines()):
+            return {**state, "execution_result": "❌ No executable cmsh commands. Skipping execution."}
         try:
-            exec_out = await executor.ainvoke(cmds)
+            exec_out = await asyncio.wait_for(
+                executor.ainvoke(cmds),
+                timeout=state.get("timeout", None) or LOCAL_CMD_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            exec_out = f"❌ Execution timed out after {state.get('timeout', None) or LOCAL_CMD_TIMEOUT}s"
         except Exception as e:  # noqa: BLE001
             exec_out = f"❌ Execution error: {str(e)}"
         return {**state, "execution_result": exec_out}
@@ -673,71 +661,46 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         """Synthesize results for diagnostics-only requests (no command generation/execution)"""
         final = ("# 🧭 DGX Orchestration (Diagnostics Only)\n\n"
                  "## Reasoning and Decision\n" + (state.get("analysis", "") or "") + "\n\n"
-                 "## ReAct Agent Analysis\n" + (state.get("react_agent_output", "") or "") + "\n\n"
+                 "## Assessment Output\n" + (state.get("assessment", "") or "") + "\n\n"
                  "## Recommendation\n"
-                 "Based on the analysis above, see the ReAct agent's diagnostic findings and recommendations. "
-                 "No BCM commands were generated or executed as this was a diagnostics-only request.\n")
+                 "Based on the analysis above, see the diagnostic findings. "
+                 "No BCM commands were generated or executed.\n")
         return {**state, "final_output": final}
 
-    # Smart routing based on LLM decision analysis
+    # Always assess first, then branch
     def route_after_analysis(state: OrchestratorState):
-        """Route based on LLM decision from analysis phase"""
-        # Prefer the parsed/stored action_type with a safe default
+        # Always assess first, branch afterwards
+        logger.info("Orchestrator routing decision: %s -> assess", state.get("action_type", "diagnostics_only"))
+        return "assess"
+
+    def route_after_assess(state: OrchestratorState):
         action_type = state.get("action_type", "diagnostics_only")
+        if action_type in ("generate_bcm_commands", "reset_nodes"):
+            return "generate"
+        return "synthesize_diagnostics_only"
 
-        # Route based on LLM decision
-        routing_map = {
-            "none": "synthesize",  # Skip all action steps
-            "diagnostics_only": "react_agent",  # Run agent but skip execution
-            "generate_bcm_commands": "react_agent",  # Normal flow
-            "reset_nodes": "react_agent"  # Normal flow (could add special handling)
-        }
-
-        route = routing_map.get(action_type, "react_agent")
-        print(f"🧭 Orchestrator routing decision: {action_type} → {route}")
-        return route
-
-    def route_after_react_agent(state: OrchestratorState):
-        """Route after react agent based on original LLM decision"""
-        action_type = state.get("action_type", "diagnostics_only")
-
-        if action_type == "diagnostics_only":
-            print(f"🔍 Post-agent routing: {action_type} → synthesize_diagnostics_only")
-            return "synthesize_diagnostics_only"
-        else:
-            print(f"⚙️ Post-agent routing: {action_type} → generate")
-            return "generate"  # Continue to command generation
+    # No post-agent routing in minimal orchestrator
 
     # Build LangGraph with conditional routing
     graph = StateGraph(OrchestratorState)
     graph.add_node("assess", assess_node)
     graph.add_node("analyze", analyze_and_decide)
-    graph.add_node("react_agent", run_react_agent)
     graph.add_node("generate", generate_commands)
     graph.add_node("execute", execute_commands)
     graph.add_node("synthesize", synthesize)
     graph.add_node("synthesize_diagnostics_only", synthesize_diagnostics_only)
 
-    graph.set_entry_point("assess")
-    graph.add_edge("assess", "analyze")
+    graph.set_entry_point("analyze")
 
-    # Key change: Multiple routing options from analyze
-    graph.add_conditional_edges(
-        "analyze",
-        route_after_analysis,
-        {
-            "react_agent": "react_agent",  # Normal flow or diagnostics
-            "synthesize": "synthesize"  # Skip all actions (action_type="none")
-        })
+    # Always route to assess first
+    graph.add_conditional_edges("analyze", route_after_analysis, {"assess": "assess"})
 
-    # Add conditional routing after react_agent based on original decision
-    graph.add_conditional_edges(
-        "react_agent",
-        route_after_react_agent,
-        {
-            "generate": "generate",  # Normal flow
-            "synthesize_diagnostics_only": "synthesize_diagnostics_only"  # Diagnostics only
-        })
+    # After assessment, branch to generate or synthesize_diagnostics_only
+    graph.add_conditional_edges("assess",
+                                route_after_assess, {
+                                    "generate": "generate",
+                                    "synthesize_diagnostics_only": "synthesize_diagnostics_only",
+                                })
 
     graph.add_edge("generate", "execute")
     graph.add_edge("execute", "synthesize")
