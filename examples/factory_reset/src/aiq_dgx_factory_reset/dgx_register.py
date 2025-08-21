@@ -112,17 +112,33 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                     os.chmod(script_path_on_disk, 0o755)
                 except Exception:
                     pass
-                # Use the exact same command format that works when run manually
-                cmd = f"/bin/bash {script_path_on_disk}"
+                # Try to match the user's exact working command by using relative path
+                relative_script = "examples/factory_reset/scripts/node_assessment.sh"
+                project_root = Path(__file__).resolve().parents[4]  # Go up to project root
+                cmd = f"/bin/bash {relative_script}"
+
+                logger.info(f"🔧 DEBUG: About to run command: {cmd}")
+                logger.info(f"🔧 DEBUG: Project root: {project_root}")
+                logger.info(f"🔧 DEBUG: Current working dir: {os.getcwd()}")
+                logger.info(f"🔧 DEBUG: Script exists (abs): {os.path.exists(script_path_on_disk)}")
+                logger.info(
+                    f"🔧 DEBUG: Script exists (rel): {os.path.exists(os.path.join(project_root, relative_script))}")
+
                 proc = await asyncio.create_subprocess_shell(
                     cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                     env=os.environ.copy(),
-                    cwd=os.getcwd(),
+                    cwd=str(project_root),  # Run from project root like user did
                 )
+                logger.info(f"🔧 DEBUG: Subprocess created, PID: {proc.pid}")
+
+                # Add a short timeout first to see if process starts
                 try:
+                    logger.info("🔧 DEBUG: Waiting for subprocess to complete...")
                     stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
+                    logger.info(f"🔧 DEBUG: Subprocess completed, return code: {proc.returncode}")
+                    logger.info(f"🔧 DEBUG: Output length: {len(stdout) if stdout else 0} bytes")
                 except asyncio.TimeoutError:
                     try:
                         proc.kill()
