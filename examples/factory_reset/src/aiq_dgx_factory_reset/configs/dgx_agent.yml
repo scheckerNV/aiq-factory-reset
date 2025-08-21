@@ -22,7 +22,7 @@ functions:
     _type: aiq_dgx_factory_reset/node_assessment_tool
     cluster_host: "localhost"
     cluster_user: "root"
-    timeout: 300
+    timeout: 45
 
   # Read results of node assessment
   node_results_reader:

@@ -108,23 +108,54 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
 
             # Local run
             if config.cluster_host == "localhost":
-                # Ensure script is executable and run via bash to avoid exec perms issues
+                # Ensure script is executable and run via bash -lc with enriched PATH
                 try:
                     os.chmod(script_path_on_disk, 0o755)
                 except Exception:
                     pass
+                env = os.environ.copy()
+                extra_paths = [
+                    "/cm/local/apps/cmd/bin",
+                    "/usr/sbin",
+                    "/usr/bin",
+                    "/bin",
+                    "/sbin",
+                ]
+                env["PATH"] = os.pathsep.join([*extra_paths, env.get("PATH", "")])
+                logger.info("Starting local node assessment: %s", script_path_on_disk)
                 proc = await asyncio.create_subprocess_exec(
                     "/bin/bash",
-                    script_path_on_disk,
+                    "-lc",
+                    shlex.quote(script_path_on_disk),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    env=env,
                 )
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
+                logger.info("Local assessment PID: %s", getattr(proc, "pid", None))
+                try:
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
+                except asyncio.TimeoutError:
+                    try:
+                        proc.kill()
+                        await proc.wait()
+                    except Exception:
+                        pass
+                    return f"❌ Local assessment timed out after {config.timeout}s"
+                s_out = (stdout or b"").decode("utf-8", errors="replace")
+                s_err = (stderr or b"").decode("utf-8", errors="replace")
                 if proc.returncode != 0:
-                    # Include stdout as well since some tools write errors to stdout
-                    return ("❌ Local assessment failed:\n" + (stderr.decode('utf-8') or '').strip() + "\n" +
-                            (stdout.decode('utf-8') or '').strip())
-                outdir = stdout.decode("utf-8").strip().splitlines()[-1]
+                    return ("❌ Local assessment failed:\n" + s_err.strip() + "\n" + s_out.strip())
+                lines = [ln for ln in s_out.strip().splitlines() if ln.strip()]
+                if not lines:
+                    return "❌ Local assessment produced no output"
+                outdir = None
+                for ln in reversed(lines):
+                    m = re.search(r"(/tmp/node_assessment_[0-9_]+)", ln)
+                    if m:
+                        outdir = m.group(1)
+                        break
+                if not outdir:
+                    outdir = lines[-1].strip()
                 return f"✅ Node assessment complete. Results in: {outdir}"
 
             # Remote upload and run
@@ -143,12 +174,16 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                                                             stdout=asyncio.subprocess.PIPE,
                                                             stderr=asyncio.subprocess.PIPE)
             try:
-                await asyncio.wait_for(scp_proc.communicate(), timeout=config.timeout)
+                scp_out, scp_err = await asyncio.wait_for(scp_proc.communicate(), timeout=config.timeout)
             except asyncio.TimeoutError:
-                scp_proc.kill()
+                try:
+                    scp_proc.kill()
+                except Exception:
+                    pass
                 return "❌ Upload timed out"
             if scp_proc.returncode != 0:
-                return "❌ Failed to upload node assessment script to cluster"
+                err = (scp_err or b"").decode("utf-8", errors="replace")[:500]
+                return f"❌ Failed to upload node assessment script to cluster\n{err}"
 
             ssh_cmd = [
                 "ssh",
@@ -159,7 +194,7 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                 "-o",
                 "StrictHostKeyChecking=accept-new",
                 f"{config.cluster_user}@{config.cluster_host}",
-                "chmod +x /tmp/node_assessment.sh && /tmp/node_assessment.sh",
+                'bash -lc "chmod +x /tmp/node_assessment.sh && /tmp/node_assessment.sh; rc=$?; rm -f /tmp/node_assessment.sh; exit $rc"',
             ]
             proc = await asyncio.create_subprocess_exec(*ssh_cmd,
                                                         stdout=asyncio.subprocess.PIPE,
@@ -173,9 +208,19 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                     pass
                 return f"❌ Remote assessment timed out after {config.timeout}s"
             if proc.returncode != 0:
-                return ("❌ Remote assessment failed:\n" + (stderr.decode('utf-8') or '').strip() + "\n" +
-                        (stdout.decode('utf-8') or '').strip())
-            outdir = stdout.decode("utf-8").strip().splitlines()[-1]
+                s_out = (stdout or b"").decode("utf-8", errors="replace")
+                s_err = (stderr or b"").decode("utf-8", errors="replace")
+                return ("❌ Remote assessment failed:\n" + s_err.strip() + "\n" + s_out.strip())
+            s_out = (stdout or b"").decode("utf-8", errors="replace")
+            lines = [ln for ln in s_out.strip().splitlines() if ln.strip()]
+            outdir = None
+            for ln in reversed(lines):
+                m = re.search(r"(/tmp/node_assessment_[0-9_]+)", ln)
+                if m:
+                    outdir = m.group(1)
+                    break
+            if not outdir and lines:
+                outdir = lines[-1].strip()
             return ("✅ Node assessment completed successfully!\n\n"
                     f"📁 Results saved on cluster: {outdir}\n"
                     "Use the node_results_reader tool to analyze the results.")
