@@ -459,27 +459,43 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         decision_json: str
 
     async def assess_node(state: OrchestratorState):
+        logger.info("🔍 assess_node: Starting node assessment...")
         if not node_assess:
+            logger.warning("⚠️ assess_node: No node_assess tool available")
             return state
+
         try:
+            logger.info("🚀 assess_node: Calling node_assess.ainvoke...")
             assess_out = await asyncio.wait_for(
                 node_assess.ainvoke("Run DGX node assessment and save results"),
                 timeout=state.get("timeout", None) or LOCAL_CMD_TIMEOUT,
             )
+            logger.info("✅ assess_node: Node assessment completed successfully")
         except asyncio.TimeoutError:
             assess_out = f"❌ Node assessment timed out after {state.get('timeout', None) or LOCAL_CMD_TIMEOUT}s"
+            logger.warning("⏰ assess_node: Node assessment timed out")
         except Exception as e:  # noqa: BLE001
             assess_out = f"❌ Node assessment error: {str(e)}"
+            logger.error("❌ assess_node: Node assessment failed: %s", str(e))
+
         # Refresh summary after assessment to include latest results
+        logger.info("📖 assess_node: Reading assessment results...")
         refreshed = ""
         if node_reader:
             try:
                 refreshed = await asyncio.wait_for(node_reader.ainvoke("summary"), timeout=LOCAL_CMD_TIMEOUT)
-            except Exception:
+                logger.info("✅ assess_node: Results read successfully")
+            except Exception as e:
+                logger.warning("⚠️ assess_node: Failed to read results: %s", str(e))
                 refreshed = ""
+        else:
+            logger.warning("⚠️ assess_node: No node_reader tool available")
+
         combined_analysis = (state.get("analysis", "") or "")
         if refreshed:
             combined_analysis = (combined_analysis + "\n\n" + refreshed).strip()
+
+        logger.info("🏁 assess_node: Completed, returning state")
         return {**state, "assessment": assess_out, "analysis": combined_analysis}
 
     async def analyze_and_decide(state: OrchestratorState):
@@ -489,6 +505,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         - Pass 2: conditional RAG enrichment (only if action indicates commands/reset).
         Adds deterministic keyword overrides to ensure reset requests are labeled correctly.
         """
+        logger.info("🧠 analyze_and_decide: Starting analysis...")
         import json as _json
 
         # Skip reader call in analyze_and_decide to avoid duplicates
@@ -581,6 +598,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             "focus": ""
         })
 
+        logger.info("✅ analyze_and_decide: Analysis completed, action_type=%s", action_type)
         return {**state, "analysis": analysis_report, "action_type": action_type, "decision_json": decision_json_out}
 
     # ReAct agent removed in minimal workflow
@@ -659,24 +677,29 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
     async def synthesize_diagnostics_only(state: OrchestratorState):
         """Synthesize results for diagnostics-only requests (no command generation/execution)"""
+        logger.info("📝 synthesize_diagnostics_only: Starting synthesis...")
         final = ("# 🧭 DGX Orchestration (Diagnostics Only)\n\n"
                  "## Reasoning and Decision\n" + (state.get("analysis", "") or "") + "\n\n"
                  "## Assessment Output\n" + (state.get("assessment", "") or "") + "\n\n"
                  "## Recommendation\n"
                  "Based on the analysis above, see the diagnostic findings. "
                  "No BCM commands were generated or executed.\n")
+        logger.info("✅ synthesize_diagnostics_only: Synthesis completed")
         return {**state, "final_output": final}
 
     # Always assess first, then branch
     def route_after_analysis(state: OrchestratorState):
         # Always assess first, branch afterwards
-        logger.info("Orchestrator routing decision: %s -> assess", state.get("action_type", "diagnostics_only"))
+        action_type = state.get("action_type", "diagnostics_only")
+        logger.info("🔀 route_after_analysis: %s -> assess", action_type)
         return "assess"
 
     def route_after_assess(state: OrchestratorState):
         action_type = state.get("action_type", "diagnostics_only")
         if action_type in ("generate_bcm_commands", "reset_nodes"):
+            logger.info("🔀 route_after_assess: %s -> generate", action_type)
             return "generate"
+        logger.info("🔀 route_after_assess: %s -> synthesize_diagnostics_only", action_type)
         return "synthesize_diagnostics_only"
 
     # No post-agent routing in minimal orchestrator
@@ -710,6 +733,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     app = graph.compile()
 
     async def _run(input_text: str) -> str:  # noqa: ARG001 - required by framework signature
+        logger.info("🚀 DGX Orchestrator: Starting workflow with input: %s", input_text[:100])
         state: OrchestratorState = {
             "input": input_text,
             "assessment": "",
@@ -720,7 +744,9 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             "execution_result": "",
             "final_output": "",
         }
+        logger.info("📊 DGX Orchestrator: Invoking LangGraph app...")
         result = await app.ainvoke(state)
+        logger.info("🏁 DGX Orchestrator: Workflow completed")
         return result.get("final_output", "❌ DGX orchestrator produced no output")
 
     yield FunctionInfo.from_fn(
