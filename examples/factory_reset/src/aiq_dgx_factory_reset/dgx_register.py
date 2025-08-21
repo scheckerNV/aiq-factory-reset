@@ -623,7 +623,8 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         if action_type in ("generate_bcm_commands", "reset_nodes"):
             route = "generate"
         else:
-            route = "synthesize_diagnostics_only"
+            # Diagnostics path should run assessment, then synthesize
+            route = "assess"
         logger.info("Orchestrator routing decision: %s -> %s", action_type, route)
         return route
 
@@ -649,12 +650,14 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
     graph.set_entry_point("analyze")
 
-    # Route directly from analyze to either generate or diagnostics-only synthesis
-    graph.add_conditional_edges("analyze",
-                                route_after_analysis, {
-                                    "generate": "generate",
-                                    "synthesize_diagnostics_only": "synthesize_diagnostics_only",
-                                })
+    # Route from analyze to either generate or (diagnostics) assess
+    graph.add_conditional_edges("analyze", route_after_analysis, {
+        "generate": "generate",
+        "assess": "assess",
+    })
+
+    # After assessment, synthesize diagnostics-only report
+    graph.add_edge("assess", "synthesize_diagnostics_only")
 
     graph.add_edge("generate", "execute")
     graph.add_edge("execute", "synthesize")
