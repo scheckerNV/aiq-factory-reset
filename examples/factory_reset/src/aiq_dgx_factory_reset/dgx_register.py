@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from filelock import FileLock
+from filelock import Timeout as FileLockTimeout
 from pydantic import Field
 
 from aiq.builder.builder import Builder
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 # Default timeouts and limits
 REMOTE_CMD_TIMEOUT = 120
 LOCAL_CMD_TIMEOUT = 300
+LLM_STEP_TIMEOUT = 90
 MAX_FILE_READ_CHARS = 262_144  # 256 KiB approx
 
 
@@ -102,32 +104,46 @@ async def dgx_expert_rag(config: DGXExpertRAGConfig, _builder: Builder):
             docstore_path = os.path.join(config.persist_dir, "docstore.json")
             lock_path = Path(config.persist_dir) / ".index.lock"
             os.makedirs(config.persist_dir, exist_ok=True)
-            with FileLock(str(lock_path)):
-                if os.path.exists(docstore_path):
+            lock = FileLock(str(lock_path), timeout=10)
+            try:
+                await asyncio.to_thread(lock.acquire)
+                try:
+                    if os.path.exists(docstore_path):
+                        storage_context = StorageContext.from_defaults(persist_dir=config.persist_dir)
+                        index = await asyncio.to_thread(load_index_from_storage, storage_context)
+                    else:
+                        documents: list[Document] = []
+                        for md_file in docs_path_obj.rglob("*.md"):
+                            try:
+                                content = await asyncio.to_thread(md_file.read_text, encoding="utf-8")
+                                documents.append(
+                                    Document(
+                                        text=content,
+                                        metadata={
+                                            "source": str(md_file), "file_name": md_file.name
+                                        },
+                                    ))
+                            except Exception as e:  # noqa: BLE001
+                                logger.warning("Failed to read %s: %s", md_file, e)
+
+                        if not documents:
+                            return f"❌ No DGX documentation files found in {config.docs_path}"
+
+                        index = await asyncio.to_thread(
+                            lambda: VectorStoreIndex.from_documents(documents, service_context=service_context))
+                        await asyncio.to_thread(index.storage_context.persist, config.persist_dir)
+                finally:
+                    try:
+                        lock.release()
+                    except Exception:
+                        pass
+            except FileLockTimeout:
+                logger.warning("DGX RAG index lock timeout; skipping build and attempting load-only")
+                try:
                     storage_context = StorageContext.from_defaults(persist_dir=config.persist_dir)
                     index = await asyncio.to_thread(load_index_from_storage, storage_context)
-                else:
-                    documents: list[Document] = []
-                    for md_file in docs_path_obj.rglob("*.md"):
-                        try:
-                            # Read files off the event loop
-                            content = await asyncio.to_thread(md_file.read_text, encoding="utf-8")
-                            documents.append(
-                                Document(
-                                    text=content,
-                                    metadata={
-                                        "source": str(md_file), "file_name": md_file.name
-                                    },
-                                ))
-                        except Exception as e:  # noqa: BLE001
-                            logger.warning("Failed to read %s: %s", md_file, e)
-
-                    if not documents:
-                        return f"❌ No DGX documentation files found in {config.docs_path}"
-
-                    index = await asyncio.to_thread(
-                        lambda: VectorStoreIndex.from_documents(documents, service_context=service_context))
-                    await asyncio.to_thread(index.storage_context.persist, config.persist_dir)
+                except Exception:
+                    return "❌ RAG index is locked or unavailable; try again later."
 
             query_engine = index.as_query_engine(similarity_top_k=config.similarity_top_k,
                                                  response_mode=config.response_mode,
@@ -211,6 +227,12 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
             # Remote upload and run
             scp_cmd = [
                 "scp",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                f"ConnectTimeout={min(30, config.timeout)}",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
                 script_path_on_disk,
                 f"{config.cluster_user}@{config.cluster_host}:/tmp/node_assessment.sh",
             ]
@@ -227,13 +249,26 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
 
             ssh_cmd = [
                 "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                f"ConnectTimeout={min(30, config.timeout)}",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
                 f"{config.cluster_user}@{config.cluster_host}",
                 "chmod +x /tmp/node_assessment.sh && /tmp/node_assessment.sh",
             ]
             proc = await asyncio.create_subprocess_exec(*ssh_cmd,
                                                         stdout=asyncio.subprocess.PIPE,
                                                         stderr=asyncio.subprocess.PIPE)
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                return f"❌ Remote assessment timed out after {config.timeout}s"
             if proc.returncode != 0:
                 return ("❌ Remote assessment failed:\n" + (stderr.decode('utf-8') or '').strip() + "\n" +
                         (stdout.decode('utf-8') or '').strip())
@@ -351,13 +386,26 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
             remote_glob = shlex.quote(config.results_directory)
             latest_dir_cmd = [
                 "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-o",
+                f"ConnectTimeout={min(30, REMOTE_CMD_TIMEOUT)}",
                 f"{config.cluster_user}@{config.cluster_host}",
                 f"bash -lc 'ls -td -- {remote_glob} 2>/dev/null | head -1'",
             ]
             latest_proc = await asyncio.create_subprocess_exec(*latest_dir_cmd,
                                                                stdout=asyncio.subprocess.PIPE,
                                                                stderr=asyncio.subprocess.PIPE)
-            latest_stdout, _ = await asyncio.wait_for(latest_proc.communicate(), timeout=REMOTE_CMD_TIMEOUT)
+            try:
+                latest_stdout, _ = await asyncio.wait_for(latest_proc.communicate(), timeout=REMOTE_CMD_TIMEOUT)
+            except asyncio.TimeoutError:
+                try:
+                    latest_proc.kill()
+                except Exception:
+                    pass
+                return f"❌ Timed out locating latest directory ({REMOTE_CMD_TIMEOUT}s)"
             if latest_proc.returncode != 0 or not latest_stdout.strip():
                 return f"❌ Could not find latest assessment directory matching {config.results_directory}"
             latest_dir = latest_stdout.decode("utf-8").strip()
@@ -374,13 +422,26 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
                             "'")
                 ssh_cmd = [
                     "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "StrictHostKeyChecking=accept-new",
+                    "-o",
+                    f"ConnectTimeout={min(30, REMOTE_CMD_TIMEOUT)}",
                     f"{config.cluster_user}@{config.cluster_host}",
                     find_cmd,
                 ]
                 proc = await asyncio.create_subprocess_exec(*ssh_cmd,
                                                             stdout=asyncio.subprocess.PIPE,
                                                             stderr=asyncio.subprocess.PIPE)
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=REMOTE_CMD_TIMEOUT)
+                try:
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=REMOTE_CMD_TIMEOUT)
+                except asyncio.TimeoutError:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    continue
                 if proc.returncode == 0:
                     content = stdout.decode("utf-8")
                     if content.strip():
@@ -491,7 +552,12 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         if not node_assess:
             return state
         try:
-            assess_out = await node_assess.ainvoke("Run DGX node assessment and save results")
+            assess_out = await asyncio.wait_for(
+                node_assess.ainvoke("Run DGX node assessment and save results"),
+                timeout=state.get("timeout", None) or LOCAL_CMD_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            assess_out = f"❌ Node assessment timed out after {state.get('timeout', None) or LOCAL_CMD_TIMEOUT}s"
         except Exception as e:  # noqa: BLE001
             assess_out = f"❌ Node assessment error: {str(e)}"
         return {**state, "assessment": assess_out}
@@ -512,7 +578,9 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         reader_out = ""
         if node_reader:
             try:
-                reader_out = await node_reader.ainvoke("summary")
+                reader_out = await asyncio.wait_for(node_reader.ainvoke("summary"), timeout=LOCAL_CMD_TIMEOUT)
+            except asyncio.TimeoutError:
+                reader_out = "❌ Node results reader timed out"
             except Exception:
                 reader_out = ""
 
@@ -523,7 +591,11 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         } | decide_prompt | reasoning_llm | StrOutputParser())
 
         try:
-            decision_json = await chain_initial.ainvoke(state.get("input", ""))
+            decision_json = await asyncio.wait_for(chain_initial.ainvoke(state.get("input", "")),
+                                                   timeout=LLM_STEP_TIMEOUT)
+        except asyncio.TimeoutError:
+            decision_json = ("{\"rationale\": [\"timeout\"], \"action_needed\": false, "
+                             "\"action_type\": \"diagnostics_only\", \"focus\": \"\"}")
         except Exception:
             decision_json = ("{\"rationale\": [\"LLM error\"], \"action_needed\": false, "
                              "\"action_type\": \"diagnostics_only\", \"focus\": \"\"}")
@@ -605,8 +677,12 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         dgx_guidance = ""
         if action_type in ("generate_bcm_commands", "reset_nodes") and dgx_rag:
             try:
-                dgx_guidance = await dgx_rag.ainvoke(
-                    "DGX node reset prerequisites and best practices for H100-based SuperPOD.")
+                dgx_guidance = await asyncio.wait_for(
+                    dgx_rag.ainvoke("DGX node reset prerequisites and best practices for H100-based SuperPOD."),
+                    timeout=LLM_STEP_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                dgx_guidance = "❌ DGX guidance RAG timed out"
             except Exception:
                 dgx_guidance = ""
 
@@ -667,7 +743,9 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
         # ==== Invoke the agent ====
         try:
-            out = await react_agent_tool.ainvoke(react_input)
+            out = await asyncio.wait_for(react_agent_tool.ainvoke(react_input), timeout=LLM_STEP_TIMEOUT)
+        except asyncio.TimeoutError:
+            out = f"❌ DGX ReAct agent timed out after {LLM_STEP_TIMEOUT}s"
         except Exception as e:
             out = f"❌ DGX ReAct agent error: {str(e)}"
 
@@ -680,11 +758,15 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                    (state.get("react_agent_output", "") or ""))
         try:
             chain_for_cmds = commands_prompt | reasoning_llm | StrOutputParser()
-            bcm_query = await chain_for_cmds.ainvoke({"context": context})
+            bcm_query = await asyncio.wait_for(chain_for_cmds.ainvoke({"context": context}), timeout=LLM_STEP_TIMEOUT)
+        except asyncio.TimeoutError:
+            bcm_query = f"CONTEXT:\n{context}\n\n[Timed out generating BCM query]"
         except Exception:
             bcm_query = f"CONTEXT:\n{context}"
         try:
-            commands_text = await bcm_rag.ainvoke(bcm_query)
+            commands_text = await asyncio.wait_for(bcm_rag.ainvoke(bcm_query), timeout=LLM_STEP_TIMEOUT)
+        except asyncio.TimeoutError:
+            commands_text = f"❌ Command generation timed out after {LLM_STEP_TIMEOUT}s"
         except Exception as e:  # noqa: BLE001
             commands_text = f"❌ Command generation error: {str(e)}"
         # Extract only exact cmsh commands for execution safety; if none, set message and skip execution later
@@ -702,7 +784,12 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         if not cmds.strip() or not all(line.strip().startswith('cmsh -c "') for line in cmds.splitlines()):
             return {**state, "execution_result": "❌ No executable cmsh commands. Skipping execution."}
         try:
-            exec_out = await executor.ainvoke(cmds)
+            exec_out = await asyncio.wait_for(
+                executor.ainvoke(cmds),
+                timeout=state.get("timeout", None) or LOCAL_CMD_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            exec_out = f"❌ Execution timed out after {state.get('timeout', None) or LOCAL_CMD_TIMEOUT}s"
         except Exception as e:  # noqa: BLE001
             exec_out = f"❌ Execution error: {str(e)}"
         return {**state, "execution_result": exec_out}
