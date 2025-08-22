@@ -174,9 +174,10 @@ class AIQWorkflowRunner:
             config_dir = self.config_path.parent
             os.chdir(str(config_dir.parent.parent))  # Go to project root
 
-            # Run the AIQ workflow
+            # Run the AIQ workflow using current Python environment
             # Note: This runs the actual AIQ agent with your DCGM tools
-            cmd = ['aiq', 'run', '--config_file', str(self.config_path), '--input', message]
+            import sys
+            cmd = [sys.executable, '-m', 'nat.cli', 'run', '--config_file', str(self.config_path), '--input', message]
 
             result = await asyncio.create_subprocess_exec(*cmd,
                                                           stdout=asyncio.subprocess.PIPE,

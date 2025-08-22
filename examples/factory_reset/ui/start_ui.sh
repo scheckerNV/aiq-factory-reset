@@ -70,16 +70,26 @@ fi
 
 echo "✅ Dependencies check passed"
 
-# Create Python virtual environment if it doesn't exist
-VENV_DIR="$UI_DIR/.venv"
-if [[ ! -d "$VENV_DIR" ]]; then
-    echo "📦 Creating Python virtual environment..."
-    python3 -m venv "$VENV_DIR"
+# Detect and use the best available Python virtual environment
+if [[ -n "$VIRTUAL_ENV" ]]; then
+    # Already in a virtual environment - use it
+    VENV_DIR="$VIRTUAL_ENV"
+    echo "📦 Using existing virtual environment: $VENV_DIR"
+elif [[ -d "$PROJECT_ROOT/.venv" ]]; then
+    # Project-level venv exists - use it
+    VENV_DIR="$PROJECT_ROOT/.venv"
+    echo "📦 Using project virtual environment: $VENV_DIR"
+    source "$VENV_DIR/bin/activate"
+else
+    # Create UI-specific venv
+    VENV_DIR="$UI_DIR/.venv"
+    if [[ ! -d "$VENV_DIR" ]]; then
+        echo "📦 Creating UI virtual environment..."
+        python3 -m venv "$VENV_DIR"
+    fi
+    echo "🔧 Activating UI virtual environment..."
+    source "$VENV_DIR/bin/activate"
 fi
-
-# Activate virtual environment
-echo "🔧 Activating Python virtual environment..."
-source "$VENV_DIR/bin/activate"
 
 # Install Python dependencies
 echo "📦 Installing Python dependencies..."
@@ -105,9 +115,11 @@ fi
 echo "📦 Verifying critical dependencies..."
 python3 -c "
 import sys
-required_modules = ['langgraph', 'langchain', 'fastapi', 'uvicorn']
+
+# Test basic dependencies
+basic_modules = ['fastapi', 'uvicorn', 'langchain', 'langgraph']
 missing = []
-for module in required_modules:
+for module in basic_modules:
     try:
         __import__(module)
         print(f'✅ {module} - OK')
@@ -115,8 +127,18 @@ for module in required_modules:
         missing.append(module)
         print(f'❌ {module} - MISSING')
 
+# Test specific langgraph import that NAT react agent needs
+try:
+    from langgraph.graph.graph import CompiledGraph
+    print('✅ langgraph.graph.graph.CompiledGraph - OK (NAT react agent compatible)')
+except ImportError as e:
+    missing.append('langgraph.graph.graph')
+    print(f'❌ langgraph.graph.graph.CompiledGraph - MISSING')
+    print(f'    Error: {e}')
+    print('    Hint: Try pip install \"langgraph<0.2.0\"')
+
 if missing:
-    print(f'❌ Missing critical dependencies: {missing}')
+    print(f'❌ Missing or incompatible dependencies: {missing}')
     print('Please check the installation logs above.')
     sys.exit(1)
 else:

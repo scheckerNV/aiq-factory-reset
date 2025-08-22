@@ -7,12 +7,12 @@ pyyaml>=6.0.1
 python-multipart>=0.0.9
 anyio>=4.5
 
-# AIQ/NAT core dependencies
-langgraph>=0.2.0
-langchain>=0.3.0
-langchain-core>=0.3.0
-langchain-community>=0.3.0
-langchain-openai>=0.2.0
+# AIQ/NAT core dependencies (compatible versions for react agent)
+langgraph<0.2.0
+langchain<0.3.0
+langchain-core<0.3.0
+langchain-community<0.3.0
+langchain-openai<0.2.0
 
 # Additional dependencies commonly needed for AIQ workflows
 numpy>=1.24.0
