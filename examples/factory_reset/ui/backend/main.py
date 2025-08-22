@@ -174,15 +174,26 @@ class AIQWorkflowRunner:
             config_dir = self.config_path.parent
             os.chdir(str(config_dir.parent.parent))  # Go to project root
 
-            # Run the AIQ workflow using current Python environment
+            # Run the AIQ workflow using aiq executable from current venv
             # Note: This runs the actual AIQ agent with your DCGM tools
             import sys
-            cmd = [sys.executable, '-m', 'nat.cli', 'run', '--config_file', str(self.config_path), '--input', message]
+            from pathlib import Path
+
+            # Build path to aiq executable from current interpreter's venv
+            venv_bin = Path(sys.executable).parent
+            aiq_bin = venv_bin / "aiq"
+
+            # Ensure the venv's bin directory is in PATH
+            env = os.environ.copy()
+            env["PATH"] = str(venv_bin) + os.pathsep + env.get("PATH", "")
+
+            cmd = [str(aiq_bin), 'run', '--config_file', str(self.config_path), '--input', message]
 
             result = await asyncio.create_subprocess_exec(*cmd,
                                                           stdout=asyncio.subprocess.PIPE,
                                                           stderr=asyncio.subprocess.PIPE,
-                                                          cwd=str(config_dir.parent.parent))
+                                                          cwd=str(config_dir.parent.parent),
+                                                          env=env)
 
             stdout, stderr = await result.communicate()
 
