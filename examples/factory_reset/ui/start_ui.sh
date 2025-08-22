@@ -6,7 +6,7 @@
 set -e
 
 UI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$UI_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$UI_DIR/../.." && pwd)"
 
 echo "🚀 Starting DCGM Agent Chat UI..."
 echo "Project root: $PROJECT_ROOT"
