@@ -19,16 +19,11 @@ functions:
 
 llms:
   nim_llm:
-    _type: nim
+    _type: openai
     model_name: nvidia/llama-3_3-nemotron-super-49b-v1_5
     temperature: 0.0
     max_tokens: 1024
-
-  # Optional fallback if you don't have NIM:
-  # openai_llm:
-  #   _type: openai
-  #   model_name: gpt-4o-mini
-  #   max_tokens: 1024
+    base_url: http://localhost:8000/v1
 
 workflow:
   _type: tool_calling_agent
