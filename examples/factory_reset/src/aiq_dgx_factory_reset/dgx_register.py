@@ -447,6 +447,8 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         final_output: str
         action_type: str
         decision_json: str
+        results_query: str
+        results_directory: str
 
     async def assess_node(state: OrchestratorState):
         logger.info("🔍 assess_node: Starting node assessment...")
@@ -468,12 +470,31 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             assess_out = f"❌ Node assessment error: {str(e)}"
             logger.error("❌ assess_node: Node assessment failed: %s", str(e))
 
-        # Refresh summary after assessment to include latest results
-        logger.info("📖 assess_node: Reading assessment results...")
+        # Extract results directory from assessment output
+        logger.info("📁 assess_node: Extracting results directory...")
+        results_dir = ""
+        if assess_out:
+            m = re.search(r"(/tmp/node_assessment_[0-9_]+)", assess_out)
+            if m:
+                results_dir = m.group(1)
+                logger.info("📁 assess_node: Found results directory: %s", results_dir)
+
+        # Get the appropriate results query (set in analyze_and_decide)
+        results_query = state.get("results_query", "overview")  # default to overview for better detail
+
+        # Include directory in query if we found one
+        if results_dir:
+            results_query_with_dir = f"{results_query} {results_dir}"
+        else:
+            results_query_with_dir = results_query
+
+        # Refresh results after assessment to include detailed results
+        logger.info("📖 assess_node: Reading assessment results with query: %s", results_query_with_dir)
         refreshed = ""
         if node_reader:
             try:
-                refreshed = await asyncio.wait_for(node_reader.ainvoke("summary"), timeout=LOCAL_CMD_TIMEOUT)
+                refreshed = await asyncio.wait_for(node_reader.ainvoke(results_query_with_dir),
+                                                   timeout=LOCAL_CMD_TIMEOUT)
                 logger.info("✅ assess_node: Results read successfully")
             except Exception as e:
                 logger.warning("⚠️ assess_node: Failed to read results: %s", str(e))
@@ -486,7 +507,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             combined_analysis = (combined_analysis + "\n\n" + refreshed).strip()
 
         logger.info("🏁 assess_node: Completed, returning state")
-        return {**state, "assessment": assess_out, "analysis": combined_analysis}
+        return {**state, "assessment": assess_out, "analysis": combined_analysis, "results_directory": results_dir}
 
     async def analyze_and_decide(state: OrchestratorState):
         """
@@ -501,6 +522,20 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         # Skip reader call in analyze_and_decide to avoid duplicates
         # Assessment will be refreshed after node_assessment runs
         reader_out = ""
+
+        # === Determine results detail level based on user input ===
+        user_input = (state.get("input", "") or "").lower()
+        results_query = "summary"  # default
+
+        if any(term in user_input for term in ["full", "all", "detailed", "everything", "complete"]):
+            results_query = "full"
+        elif any(term in user_input for term in ["overview", "cluster health", "burn configs"]):
+            results_query = "overview"
+        elif any(term in user_input for term in ["state", "status", "current", "what", "show", "list"]):
+            results_query = "overview"  # More detailed than summary for status queries
+
+        # Store results query in state for use in assess_node
+        state["results_query"] = results_query
 
         # === Minimal classification: regex-only ===
         extracted_json = "{}"
@@ -668,12 +703,46 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     async def synthesize_diagnostics_only(state: OrchestratorState):
         """Synthesize results for diagnostics-only requests (no command generation/execution)"""
         logger.info("📝 synthesize_diagnostics_only: Starting synthesis...")
+
+        # Extract the detailed results from the analysis
+        analysis = state.get("analysis", "") or ""
+        assessment_log = state.get("assessment", "") or ""
+
+        # Split analysis into reasoning part and detailed results part
+        reasoning_part = ""
+        detailed_results = ""
+
+        if analysis:
+            # The analysis contains reasoning + detailed file contents
+            # Look for the file contents section (starts with 📄)
+            analysis_lines = analysis.split("\n")
+            reasoning_lines = []
+            results_lines = []
+            in_results_section = False
+
+            for line in analysis_lines:
+                if line.strip().startswith("📄") or in_results_section:
+                    in_results_section = True
+                    results_lines.append(line)
+                else:
+                    reasoning_lines.append(line)
+
+            reasoning_part = "\n".join(reasoning_lines).strip()
+            detailed_results = "\n".join(results_lines).strip()
+
+        # Build comprehensive output
         final = ("# 🧭 DGX Orchestration (Diagnostics Only)\n\n"
-                 "## Reasoning and Decision\n" + (state.get("analysis", "") or "") + "\n\n"
-                 "## Assessment Output\n" + (state.get("assessment", "") or "") + "\n\n"
-                 "## Recommendation\n"
-                 "Based on the analysis above, see the diagnostic findings. "
-                 "No BCM commands were generated or executed.\n")
+                 "## Reasoning and Decision\n" + reasoning_part + "\n\n"
+                 "## Assessment Script Log\n" + assessment_log + "\n\n")
+
+        if detailed_results:
+            final += "## Detailed Assessment Results\n" + detailed_results + "\n\n"
+
+        final += ("## Recommendation\n"
+                  "Based on the analysis above, see the diagnostic findings. "
+                  f"Results directory: {state.get('results_directory', 'N/A')}.\n"
+                  "No BCM commands were generated or executed.\n")
+
         logger.info("✅ synthesize_diagnostics_only: Synthesis completed")
         return {**state, "final_output": final}
 
