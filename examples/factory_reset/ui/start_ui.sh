@@ -145,10 +145,13 @@ else:
 
 # Verify AIQ can load the config
 echo "📦 Verifying AIQ configuration..."
-python3 - <<'PY'
+echo "Config resolved to: $CONFIG_PATH"
+test -f "$CONFIG_PATH" && ls -l "$CONFIG_PATH" || { echo "Config missing"; exit 1; }
+
+python3 - "$CONFIG_PATH" <<'PY'
 import yaml, sys
 from pathlib import Path
-config_path = Path(r"""'"$CONFIG_PATH"'""")
+config_path = Path(sys.argv[1])
 try:
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
