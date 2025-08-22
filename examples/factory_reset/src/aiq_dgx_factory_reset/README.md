@@ -41,7 +41,7 @@ docker volume create grafana-data
 
 Starts dcgm-exporter, Prometheus, and Grafana; waits for readiness.
 ```bash
-aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml --input "prom_stack_start"
+nat run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml --input "prom_stack_start"
 ```
 Expect:
 - dcgm-exporter: metrics=200
@@ -50,7 +50,7 @@ Expect:
 
 Force a fresh start (only once if needed):
 ```bash
-aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml --input "prom_stack_start force=true"
+nat run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml --input "prom_stack_start force=true"
 ```
 
 ## 4) Using the DCGM Expert tools
@@ -61,7 +61,7 @@ You can use explicit tool calls (most reliable) or NL one‑shot prompts.
 
 - Create a Grafana dashboard:
 ```bash
-aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml \
+nat run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml \
   --input "grafana_create_dashboard name=GPU_Overview refresh=30s overwrite=false"
 ```
 
