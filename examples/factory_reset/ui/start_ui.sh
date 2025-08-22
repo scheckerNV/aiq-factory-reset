@@ -12,10 +12,20 @@ echo "🚀 Starting DCGM Agent Chat UI..."
 echo "Project root: $PROJECT_ROOT"
 echo "UI directory: $UI_DIR"
 
-# Check if we're in the right directory
-if [[ ! -f "$PROJECT_ROOT/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml" ]]; then
-    echo "❌ Error: dcgm_agent.yml not found. Please run this script from the correct directory."
-    echo "Expected: $PROJECT_ROOT/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml"
+FACTORY_ROOT="$(cd "$UI_DIR/../.." && pwd)"  # …/examples/factory_reset
+CONFIG_PATH="$FACTORY_ROOT/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml"
+ALT_CONFIG="$PROJECT_ROOT/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml"
+
+if [[ -f "$CONFIG_PATH" ]]; then
+    echo "✅ Found config at $CONFIG_PATH"
+elif [[ -f "$ALT_CONFIG" ]]; then
+    echo "✅ Found config at $ALT_CONFIG"
+    CONFIG_PATH="$ALT_CONFIG"
+else
+    echo "❌ Error: dcgm_agent.yml not found."
+    echo "Checked:"
+    echo " - $CONFIG_PATH"
+    echo " - $ALT_CONFIG"
     exit 1
 fi
 
@@ -135,25 +145,19 @@ else:
 
 # Verify AIQ can load the config
 echo "📦 Verifying AIQ configuration..."
-if ! python3 -c "
-import yaml
-import sys
+python3 - <<'PY'
+import yaml, sys
 from pathlib import Path
-
-config_path = Path('$PROJECT_ROOT/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml')
+config_path = Path(r"""'"$CONFIG_PATH"'""")
 try:
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
-    print('✅ Configuration file loads successfully')
-    print(f'✅ Found {len(config.get(\"functions\", {}))} functions configured')
-    print(f'✅ Found {len(config.get(\"llms\", {}))} LLM(s) configured')
+    print(f'✅ Loaded config: {config_path}')
+    print(f'✅ {len(config.get("functions", {}))} functions, {len(config.get("llms", {}))} LLM(s)')
 except Exception as e:
     print(f'❌ Configuration error: {e}')
     sys.exit(1)
-"; then
-    echo "❌ Configuration verification failed"
-    exit 1
-fi
+PY
 
 # Install Node.js dependencies
 echo "📦 Installing Node.js dependencies..."
