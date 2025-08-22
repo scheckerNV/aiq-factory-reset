@@ -9,5 +9,6 @@ __version__ = "0.1.0"
 
 from . import register
 from . import dgx_register
+from . import dcgm_register
 
-__all__ = ['register', 'dgx_register']
+__all__ = ['register', 'dgx_register', 'dcgm_register']

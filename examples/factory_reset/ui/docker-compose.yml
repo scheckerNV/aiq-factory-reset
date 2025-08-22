@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  dcgm-chat-backend:
+    build:
+      context: ../
+      dockerfile: ui/Dockerfile.backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app/src
+    volumes:
+      - ../src:/app/src:ro
+      - ../ui/backend:/app/ui/backend:ro
+    networks:
+      - dcgm-network
+    restart: unless-stopped
+
+  dcgm-chat-frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - dcgm-chat-backend
+    networks:
+      - dcgm-network
+    restart: unless-stopped
+
+networks:
+  dcgm-network:
+    driver: bridge

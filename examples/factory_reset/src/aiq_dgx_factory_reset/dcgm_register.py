@@ -490,10 +490,9 @@ async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
             try_run("docker rm -f prometheus")
             try_run("docker rm -f grafana")
 
-        exp_out = None
         if not is_running("dcgm-exporter"):
-            exp_out = try_run("docker run -d --restart unless-stopped --name dcgm-exporter --net=host --gpus all "
-                              "nvcr.io/nvidia/k8s/dcgm-exporter:latest")
+            try_run("docker run -d --restart unless-stopped --name dcgm-exporter --net=host --gpus all "
+                    "nvcr.io/nvidia/k8s/dcgm-exporter:latest")
 
         prom_cfg = ("global:\n"
                     "  scrape_interval: 5s\n"
@@ -510,12 +509,11 @@ async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
         except Exception as e:
             logger.error("Failed to write %s/prometheus.yml: %s", prom_dir, e)
 
-        prom_out = None
         if not is_running("prometheus"):
-            prom_out = try_run("docker run -d --restart unless-stopped --name prometheus --net=host "
-                               "-v /tmp/prom:/etc/prometheus prom/prometheus:latest "
-                               "--config.file=/etc/prometheus/prometheus.yml "
-                               "--storage.tsdb.retention.time=15d")
+            try_run("docker run -d --restart unless-stopped --name prometheus --net=host "
+                    "-v /tmp/prom:/etc/prometheus prom/prometheus:latest "
+                    "--config.file=/etc/prometheus/prometheus.yml "
+                    "--storage.tsdb.retention.time=15d")
 
         # Ensure a persistent Grafana data dir and set admin password (defaults to 'admin' if not provided)
         try:
@@ -525,13 +523,12 @@ async def prom_stack_start(config: PromStackStartConfig, builder: Builder):
         except Exception as e:
             logger.error("Failed to ensure Grafana data dir: %s", e)
 
-        graf_out = None
         if not is_running("grafana"):
             graf_admin_pw = getenv('GRAFANA_ADMIN_PASSWORD', 'admin')
-            graf_out = try_run("docker run -d --restart unless-stopped --name grafana --net=host "
-                               f"-e GF_SECURITY_ADMIN_PASSWORD={graf_admin_pw} "
-                               "-v /tmp/grafana:/var/lib/grafana "
-                               "grafana/grafana-oss:latest")
+            try_run("docker run -d --restart unless-stopped --name grafana --net=host "
+                    f"-e GF_SECURITY_ADMIN_PASSWORD={graf_admin_pw} "
+                    "-v /tmp/grafana:/var/lib/grafana "
+                    "grafana/grafana-oss:latest")
 
         def wait_http(url: str, timeout_s: int = 60) -> str:
             import time
@@ -670,7 +667,7 @@ def _grafana_request(path: str, method: str = "GET", payload: Optional[dict] = N
         auth = (u, p)
     # retry up to ~60s for Grafana to be ready
     import time
-    last_err = None
+    last_err = Exception("Grafana request failed after retries")
     for _ in range(12):
         try:
             r = requests.request(method, f"{GRAFANA_URL}{path}", headers=headers, auth=auth, json=payload, timeout=5)
@@ -767,6 +764,8 @@ def _public_base(url: str) -> str:
 def _public_host_and_port(url: str) -> tuple[str, int]:
     p = urlparse(url)
     host = getenv("PUBLIC_HOST") or (p.hostname if p.hostname not in ("localhost", "127.0.0.1") else _node_ip())
+    if host is None:
+        host = _node_ip()
     port = p.port or 3000
     return host, port
 
@@ -779,7 +778,6 @@ async def grafana_create_dashboard(config: GrafanaCreateDashboardConfig, builder
         name = opts.get("name", "DCGM Overview")
         refresh = opts.get("refresh", "5s")
         overwrite = opts.get("overwrite", "true").lower() in ("1", "true", "yes", "y")
-        should_open = opts.get("open", "false").lower() in ("1", "true", "yes", "y")
         # Ensure Grafana is healthy before API calls
         try:
             _ = _grafana_request("/api/health")

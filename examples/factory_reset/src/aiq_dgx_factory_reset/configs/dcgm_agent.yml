@@ -3,24 +3,24 @@ general:
 
 functions:
   gpu_status:
-    _type: gpu_status
+    _type: aiq_dgx_factory_reset/gpu_status
   gpu_run_diagnostics:
-    _type: gpu_run_diagnostics
+    _type: aiq_dgx_factory_reset/gpu_run_diagnostics
   gpu_enable_health:
-    _type: gpu_enable_health
+    _type: aiq_dgx_factory_reset/gpu_enable_health
   gpu_nvlink_status:
-    _type: gpu_nvlink_status
+    _type: aiq_dgx_factory_reset/gpu_nvlink_status
   prom_stack_start:
-    _type: prom_stack_start
+    _type: aiq_dgx_factory_reset/prom_stack_start
   prom_query:
-    _type: prom_query
+    _type: aiq_dgx_factory_reset/prom_query
   grafana_create_dashboard:
-    _type: grafana_create_dashboard
+    _type: aiq_dgx_factory_reset/grafana_create_dashboard
 
 llms:
   nim_llm:
     _type: nim
-    model_name: nvidia/llama-3.3-nemotron-super-49b-v1
+    model_name: nvidia/llama-3_3-nemotron-super-49b-v1_5
     temperature: 0.0
     max_tokens: 1024
 

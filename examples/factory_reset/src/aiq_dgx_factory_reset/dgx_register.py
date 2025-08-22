@@ -101,45 +101,39 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
 
     async def _run_node_assessment(input_text: str) -> str:  # noqa: ARG001
         """Upload and execute the dedicated node_assessment.sh script; return results dir."""
+        import asyncio
+        import tempfile
+
         try:
             script_path_on_disk = str(Path(__file__).resolve().parents[2] / "scripts" / "node_assessment.sh")
             if not os.path.exists(script_path_on_disk):
                 return f"❌ node_assessment.sh not found at {script_path_on_disk}"
 
-            # Use the same reliable approach as network_assessment_tool
-            # For localhost, just copy script to /tmp and execute via shell
-            if config.cluster_host == "localhost":
-                try:
-                    os.chmod(script_path_on_disk, 0o755)
-                    # Copy script to standard location
-                    import shutil
-                    shutil.copy2(script_path_on_disk, "/tmp/node_assessment.sh")
-                    os.chmod("/tmp/node_assessment.sh", 0o755)
-                except Exception:
-                    pass
+            # Read the shell script content from the external file (same as network assessment)
+            with open(script_path_on_disk, "r", encoding="utf-8") as f:
+                script_content = f.read()
 
-                # Execute using simple shell command (like network tool)
-                cmd = ["/bin/bash", "/tmp/node_assessment.sh"]
+            # Use tempfile approach like network assessment tool
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
+                f.write(script_content)
+                script_path = f.name
+
+            # Make executable
+            os.chmod(script_path, 0o755)
+
+            if config.cluster_host == "localhost":
+                # Execute locally using the tempfile (same pattern as network tool remote execution)
+                cmd = ["/bin/bash", script_path]
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                try:
-                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
-                except asyncio.TimeoutError:
-                    try:
-                        proc.kill()
-                        await proc.wait()
-                    except Exception:
-                        pass
-                    return f"❌ Local assessment timed out after {config.timeout}s"
 
-                # Clean up
-                try:
-                    os.unlink("/tmp/node_assessment.sh")
-                except Exception:
-                    pass
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
+
+                # Clean up tempfile
+                os.unlink(script_path)
 
                 if proc.returncode == 0:
                     s_out = stdout.decode("utf-8", errors="replace")
@@ -159,74 +153,54 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                 else:
                     s_err = stderr.decode("utf-8", errors="replace")
                     return f"❌ Local assessment failed:\n{s_err.strip()}"
+            else:
+                # Remote execution (same as network assessment)
+                scp_cmd = ["scp", script_path, f"{config.cluster_user}@{config.cluster_host}:/tmp/node_assessment.sh"]
 
-            # Remote upload and run
-            scp_cmd = [
-                "scp",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                f"ConnectTimeout={min(30, config.timeout)}",
-                "-o",
-                "StrictHostKeyChecking=accept-new",
-                script_path_on_disk,
-                f"{config.cluster_user}@{config.cluster_host}:/tmp/node_assessment.sh",
-            ]
-            scp_proc = await asyncio.create_subprocess_exec(*scp_cmd,
-                                                            stdout=asyncio.subprocess.PIPE,
-                                                            stderr=asyncio.subprocess.PIPE)
-            try:
-                _, scp_err = await asyncio.wait_for(scp_proc.communicate(), timeout=config.timeout)
-            except asyncio.TimeoutError:
-                try:
-                    scp_proc.kill()
-                except Exception:
-                    pass
-                return "❌ Upload timed out"
-            if scp_proc.returncode != 0:
-                err = (scp_err or b"").decode("utf-8", errors="replace")[:500]
-                return f"❌ Failed to upload node assessment script to cluster\n{err}"
+                scp_process = await asyncio.create_subprocess_exec(*scp_cmd,
+                                                                   stdout=asyncio.subprocess.PIPE,
+                                                                   stderr=asyncio.subprocess.PIPE)
+                await scp_process.communicate()
 
-            ssh_cmd = [
-                "ssh",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                f"ConnectTimeout={min(30, config.timeout)}",
-                "-o",
-                "StrictHostKeyChecking=accept-new",
-                f"{config.cluster_user}@{config.cluster_host}",
-                'bash -lc "chmod +x /tmp/node_assessment.sh && /tmp/node_assessment.sh; '
-                'rc=$?; rm -f /tmp/node_assessment.sh; exit $rc"',
-            ]
-            proc = await asyncio.create_subprocess_exec(*ssh_cmd,
-                                                        stdout=asyncio.subprocess.PIPE,
-                                                        stderr=asyncio.subprocess.PIPE)
-            try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
-            except asyncio.TimeoutError:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-                return f"❌ Remote assessment timed out after {config.timeout}s"
-            if proc.returncode != 0:
-                s_out = (stdout or b"").decode("utf-8", errors="replace")
-                s_err = (stderr or b"").decode("utf-8", errors="replace")
-                return ("❌ Remote assessment failed:\n" + s_err.strip() + "\n" + s_out.strip())
-            s_out = (stdout or b"").decode("utf-8", errors="replace")
-            lines = [ln for ln in s_out.strip().splitlines() if ln.strip()]
-            outdir = None
-            for ln in reversed(lines):
-                m = re.search(r"(/tmp/node_assessment_[0-9_]+)", ln)
-                if m:
-                    outdir = m.group(1)
-                    break
-            if not outdir and lines:
-                outdir = lines[-1].strip()
-            return ("✅ Node assessment completed successfully!\n\n"
-                    f"📁 Results saved on cluster: {outdir}\n"
-                    "Use the node_results_reader tool to analyze the results.")
+                if scp_process.returncode != 0:
+                    os.unlink(script_path)  # Clean up tempfile
+                    return "❌ Failed to upload assessment script to cluster"
+
+                # Execute script on cluster
+                ssh_cmd = [
+                    "ssh",
+                    f"{config.cluster_user}@{config.cluster_host}",
+                    "chmod +x /tmp/node_assessment.sh && /tmp/node_assessment.sh"
+                ]
+
+                ssh_process = await asyncio.create_subprocess_exec(*ssh_cmd,
+                                                                   stdout=asyncio.subprocess.PIPE,
+                                                                   stderr=asyncio.subprocess.PIPE)
+
+                stdout, stderr = await asyncio.wait_for(ssh_process.communicate(), timeout=config.timeout)
+
+                # Clean up local tempfile
+                os.unlink(script_path)
+
+                if ssh_process.returncode == 0:
+                    s_out = stdout.decode("utf-8", errors="replace")
+                    lines = [ln for ln in s_out.strip().splitlines() if ln.strip()]
+                    outdir = None
+                    for ln in reversed(lines):
+                        m = re.search(r"(/tmp/node_assessment_[0-9_]+)", ln)
+                        if m:
+                            outdir = m.group(1)
+                            break
+                    if not outdir and lines:
+                        outdir = lines[-1].strip()
+                    return (f"✅ Node assessment completed successfully!\n\n"
+                            f"📋 Assessment Output:\n{s_out.strip()}\n\n"
+                            f"📁 Results saved on cluster: {outdir}\n"
+                            "Use the node_results_reader tool to analyze the results.")
+                else:
+                    s_err = stderr.decode("utf-8", errors="replace")
+                    return f"❌ Assessment script failed:\n{s_err.strip()}"
+
         except asyncio.TimeoutError:
             return f"❌ Assessment timed out after {config.timeout} seconds"
         except Exception as e:  # noqa: BLE001
