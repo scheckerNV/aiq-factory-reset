@@ -8,8 +8,8 @@ const nextConfig = {
       {
         source: '/api/:path*',
         destination: process.env.NODE_ENV === 'production'
-          ? 'http://dcgm-chat-backend:8000/:path*'
-          : 'http://localhost:8000/:path*'
+          ? 'http://dcgm-chat-backend:8080/:path*'
+          : 'http://localhost:8080/:path*'
       }
     ]
   }
