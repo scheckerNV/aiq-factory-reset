@@ -70,46 +70,34 @@ fi
 
 echo "✅ Dependencies check passed"
 
-# Detect and use the best available Python virtual environment
-if [[ -n "$VIRTUAL_ENV" ]]; then
-    # Already in a virtual environment - use it
-    VENV_DIR="$VIRTUAL_ENV"
-    echo "📦 Using existing virtual environment: $VENV_DIR"
-elif [[ -d "$PROJECT_ROOT/.venv" ]]; then
-    # Project-level venv exists - use it
-    VENV_DIR="$PROJECT_ROOT/.venv"
-    echo "📦 Using project virtual environment: $VENV_DIR"
-    source "$VENV_DIR/bin/activate"
-else
-    # Create UI-specific venv
-    VENV_DIR="$UI_DIR/.venv"
-    if [[ ! -d "$VENV_DIR" ]]; then
-        echo "📦 Creating UI virtual environment..."
-        python3 -m venv "$VENV_DIR"
-    fi
-    echo "🔧 Activating UI virtual environment..."
-    source "$VENV_DIR/bin/activate"
-fi
-
-# Install Python dependencies
-echo "📦 Installing Python dependencies..."
-cd "$UI_DIR/backend"
-pip install -q --upgrade pip
-
-# Install requirements with better error handling
-echo "📦 Installing backend requirements..."
-if ! pip install -r requirements.txt; then
-    echo "❌ Failed to install Python dependencies. Please check your internet connection and try again."
+VENV_DIR="$PROJECT_ROOT/.venv"
+if [[ ! -d "$VENV_DIR" ]]; then
+    echo "❌ Missing venv at $VENV_DIR; create it with: python3 -m venv $VENV_DIR && source $VENV_DIR/bin/activate && pip install -e ."
     exit 1
 fi
+source "$VENV_DIR/bin/activate"
+echo "📦 Using project virtual environment: $VENV_DIR"
 
-# Install the AIQ package in development mode with all dependencies
-echo "📦 Installing AIQ package with all dependencies..."
-cd "$PROJECT_ROOT"
-if ! pip install -e .; then
-    echo "❌ Failed to install AIQ package. Please check the project structure."
-    exit 1
-fi
+# Python dependencies are already installed in the root venv
+# (Commenting out to prevent version drift on every run)
+# echo "📦 Installing Python dependencies..."
+# cd "$UI_DIR/backend"
+# pip install -q --upgrade pip
+#
+# # Install requirements with better error handling
+# echo "📦 Installing backend requirements..."
+# if ! pip install -r requirements.txt; then
+#     echo "❌ Failed to install Python dependencies. Please check your internet connection and try again."
+#     exit 1
+# fi
+#
+# # Install the AIQ package in development mode with all dependencies
+# echo "📦 Installing AIQ package with all dependencies..."
+# cd "$PROJECT_ROOT"
+# if ! pip install -e .; then
+#     echo "❌ Failed to install AIQ package. Please check the project structure."
+#     exit 1
+# fi
 
 # Verify critical dependencies
 echo "📦 Verifying critical dependencies..."

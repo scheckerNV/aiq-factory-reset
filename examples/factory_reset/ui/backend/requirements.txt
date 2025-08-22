@@ -27,3 +27,6 @@ openai>=1.0.0
 # Development and debugging
 rich>=13.0.0
 click>=8.1.0
+
+# Pin compatible versions for NAT
+pyzotero<1.5.0  # NAT requires older pyzotero with InvalidItemFields

@@ -35,10 +35,19 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="DCGM Agent Chat UI", version="1.0.0")
 
-# Enable CORS for development
+# Enable CORS for development (support multiple frontend ports)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",  # Default Next.js
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",  # Alt port 1
+        "http://localhost:3100",
+        "http://127.0.0.1:3100",  # Alt port 2
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",  # Backend (for docs)
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -169,30 +178,30 @@ class AIQWorkflowRunner:
             # Set up environment for AIQ workflow
             import asyncio
             import os
-
-            # Set the config path for AIQ
-            config_dir = self.config_path.parent
-            os.chdir(str(config_dir.parent.parent))  # Go to project root
-
-            # Run the AIQ workflow using aiq executable from current venv
-            # Note: This runs the actual AIQ agent with your DCGM tools
             import sys
             from pathlib import Path
 
-            # Build path to aiq executable from current interpreter's venv
             venv_bin = Path(sys.executable).parent
-            aiq_bin = venv_bin / "aiq"
-
-            # Ensure the venv's bin directory is in PATH
             env = os.environ.copy()
             env["PATH"] = str(venv_bin) + os.pathsep + env.get("PATH", "")
-
-            cmd = [str(aiq_bin), 'run', '--config_file', str(self.config_path), '--input', message]
+            aiq_bin = venv_bin / "aiq"
+            if aiq_bin.exists():
+                cmd = [str(aiq_bin), "run", "--config_file", str(self.config_path), "--input", message]
+            else:
+                cmd = [
+                    sys.executable,
+                    "-m",
+                    "aiq.cli.main",
+                    "run",
+                    "--config_file",
+                    str(self.config_path),
+                    "--input",
+                    message
+                ]
 
             result = await asyncio.create_subprocess_exec(*cmd,
                                                           stdout=asyncio.subprocess.PIPE,
                                                           stderr=asyncio.subprocess.PIPE,
-                                                          cwd=str(config_dir.parent.parent),
                                                           env=env)
 
             stdout, stderr = await result.communicate()
