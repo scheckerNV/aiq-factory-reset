@@ -85,12 +85,65 @@ source "$VENV_DIR/bin/activate"
 echo "📦 Installing Python dependencies..."
 cd "$UI_DIR/backend"
 pip install -q --upgrade pip
-pip install -q -r requirements.txt
 
-# Install the AIQ package in development mode
-echo "📦 Installing AIQ package..."
+# Install requirements with better error handling
+echo "📦 Installing backend requirements..."
+if ! pip install -r requirements.txt; then
+    echo "❌ Failed to install Python dependencies. Please check your internet connection and try again."
+    exit 1
+fi
+
+# Install the AIQ package in development mode with all dependencies
+echo "📦 Installing AIQ package with all dependencies..."
 cd "$PROJECT_ROOT"
-pip install -q -e .
+if ! pip install -e .; then
+    echo "❌ Failed to install AIQ package. Please check the project structure."
+    exit 1
+fi
+
+# Verify critical dependencies
+echo "📦 Verifying critical dependencies..."
+python3 -c "
+import sys
+required_modules = ['langgraph', 'langchain', 'fastapi', 'uvicorn']
+missing = []
+for module in required_modules:
+    try:
+        __import__(module)
+        print(f'✅ {module} - OK')
+    except ImportError:
+        missing.append(module)
+        print(f'❌ {module} - MISSING')
+
+if missing:
+    print(f'❌ Missing critical dependencies: {missing}')
+    print('Please check the installation logs above.')
+    sys.exit(1)
+else:
+    print('✅ All critical dependencies verified')
+"
+
+# Verify AIQ can load the config
+echo "📦 Verifying AIQ configuration..."
+if ! python3 -c "
+import yaml
+import sys
+from pathlib import Path
+
+config_path = Path('$PROJECT_ROOT/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml')
+try:
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    print('✅ Configuration file loads successfully')
+    print(f'✅ Found {len(config.get(\"functions\", {}))} functions configured')
+    print(f'✅ Found {len(config.get(\"llms\", {}))} LLM(s) configured')
+except Exception as e:
+    print(f'❌ Configuration error: {e}')
+    sys.exit(1)
+"; then
+    echo "❌ Configuration verification failed"
+    exit 1
+fi
 
 # Install Node.js dependencies
 echo "📦 Installing Node.js dependencies..."
@@ -121,6 +174,21 @@ trap cleanup SIGINT SIGTERM
 # Set environment variables for the backend
 export DCGM_CONFIG="dcgm_agent.yml"
 export NIM_BASE_URL="http://localhost:8000/v1"
+
+# Verify environment setup
+echo "🔧 Verifying environment configuration..."
+echo "✅ DCGM_CONFIG: $DCGM_CONFIG"
+echo "✅ NIM_BASE_URL: $NIM_BASE_URL"
+
+# Verify NIM service is reachable
+echo "🔍 Checking NIM service connectivity..."
+if curl -s --max-time 5 "$NIM_BASE_URL" > /dev/null 2>&1; then
+    echo "✅ NIM service is reachable at $NIM_BASE_URL"
+else
+    echo "⚠️  NIM service not reachable at $NIM_BASE_URL"
+    echo "   Make sure your NIM container is running on port 8000"
+    echo "   You can test with: curl $NIM_BASE_URL"
+fi
 
 # Start the backend
 echo "🚀 Starting backend server..."
