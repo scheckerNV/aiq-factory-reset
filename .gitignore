@@ -229,3 +229,8 @@ examples/RAG/compose/volumes
 
 # End of https://www.gitignore.io/api/vim,c++,cmake,python,synology
 /.idea
+node_modules/
+.next/
+dist/
+.env*
+*.log
