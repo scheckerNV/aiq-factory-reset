@@ -236,7 +236,7 @@ class AIQWorkflowRunner:
 
 # Initialize the workflow runner
 # Use test config by default (works without API keys), can be overridden with env var
-config_name = os.getenv("DCGM_CONFIG", "dcgm_agent_test.yml")
+config_name = os.getenv("DCGM_CONFIG", "dcgm_agent.yml")
 config_path = Path(__file__).parent.parent.parent / "src" / "aiq_dgx_factory_reset" / "configs" / config_name
 workflow_runner = AIQWorkflowRunner(str(config_path))
 

@@ -118,6 +118,10 @@ cleanup() {
 # Set up signal handlers
 trap cleanup SIGINT SIGTERM
 
+# Set environment variables for the backend
+export DCGM_CONFIG="dcgm_agent.yml"
+export NIM_BASE_URL="http://localhost:8000/v1"
+
 # Start the backend
 echo "🚀 Starting backend server..."
 cd "$UI_DIR/backend"
