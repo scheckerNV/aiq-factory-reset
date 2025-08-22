@@ -24,20 +24,29 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Function to find an available port
+# Function to find an available port using ss (more reliable than lsof)
 find_available_port() {
-    local start_port=${1:-3000}
+    local start_port=${1:-3100}  # Start at 3100 to skip Grafana's 3000
     local max_port=$((start_port + 100))
 
     for port in $(seq $start_port $max_port); do
-        if ! lsof -i :$port >/dev/null 2>&1; then
+        # Use ss to check if port is in use (more reliable than lsof)
+        if ! ss -H -ltn | awk '{print $4}' | grep -q "[:.]:$port$"; then
             echo $port
             return
         fi
     done
 
-    # If no port found in range, return a high port
-    echo 8000
+    # If no port found in range, try high ports
+    for port in $(seq 8000 8050); do
+        if ! ss -H -ltn | awk '{print $4}' | grep -q "[:.]:$port$"; then
+            echo $port
+            return
+        fi
+    done
+
+    # Last resort - use a random high port
+    echo $((RANDOM % 1000 + 9000))
 }
 
 # Check dependencies
@@ -124,15 +133,22 @@ if ! kill -0 $BACKEND_PID 2>/dev/null; then
     exit 1
 fi
 
-# Find available port for frontend
+# Find available port for frontend (allow override via env var)
 echo "🔍 Finding available port for frontend..."
-FRONTEND_PORT=$(find_available_port 3000)
+if [[ -z "$FRONTEND_PORT" ]]; then
+    # Try using Node's detect-port for ultimate reliability
+    if command_exists npx; then
+        FRONTEND_PORT=$(npx -y detect-port 3100 2>/dev/null || find_available_port 3100)
+    else
+        FRONTEND_PORT=$(find_available_port 3100)
+    fi
+fi
 echo "✅ Using port $FRONTEND_PORT for frontend"
 
 # Start the frontend
 echo "🚀 Starting frontend server..."
 cd "$UI_DIR/frontend"
-PORT=$FRONTEND_PORT npm run start &
+HOST=0.0.0.0 PORT=$FRONTEND_PORT npm run start -- -p "$FRONTEND_PORT" -H 0.0.0.0 &
 FRONTEND_PID=$!
 
 # Wait a moment for the frontend to start
