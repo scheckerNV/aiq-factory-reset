@@ -24,6 +24,22 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Function to find an available port
+find_available_port() {
+    local start_port=${1:-3000}
+    local max_port=$((start_port + 100))
+
+    for port in $(seq $start_port $max_port); do
+        if ! lsof -i :$port >/dev/null 2>&1; then
+            echo $port
+            return
+        fi
+    done
+
+    # If no port found in range, return a high port
+    echo 8000
+}
+
 # Check dependencies
 echo "🔍 Checking dependencies..."
 
@@ -108,10 +124,15 @@ if ! kill -0 $BACKEND_PID 2>/dev/null; then
     exit 1
 fi
 
+# Find available port for frontend
+echo "🔍 Finding available port for frontend..."
+FRONTEND_PORT=$(find_available_port 3000)
+echo "✅ Using port $FRONTEND_PORT for frontend"
+
 # Start the frontend
 echo "🚀 Starting frontend server..."
 cd "$UI_DIR/frontend"
-npm run start &
+PORT=$FRONTEND_PORT npm run start &
 FRONTEND_PID=$!
 
 # Wait a moment for the frontend to start
@@ -127,7 +148,7 @@ fi
 echo ""
 echo "🎉 DCGM Agent Chat UI is running!"
 echo ""
-echo "📱 Frontend: http://localhost:3000"
+echo "📱 Frontend: http://localhost:$FRONTEND_PORT"
 echo "🔧 Backend API: http://localhost:8080"
 echo "📋 API Docs: http://localhost:8080/docs"
 echo ""
