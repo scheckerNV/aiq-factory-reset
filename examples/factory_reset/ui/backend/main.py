@@ -181,23 +181,14 @@ class AIQWorkflowRunner:
             import sys
             from pathlib import Path
 
-            venv_bin = Path(sys.executable).parent
             env = os.environ.copy()
+            venv_bin = Path(sys.executable).parent
             env["PATH"] = str(venv_bin) + os.pathsep + env.get("PATH", "")
-            aiq_bin = venv_bin / "aiq"
-            if aiq_bin.exists():
-                cmd = [str(aiq_bin), "run", "--config_file", str(self.config_path), "--input", message]
-            else:
-                cmd = [
-                    sys.executable,
-                    "-m",
-                    "aiq.cli.main",
-                    "run",
-                    "--config_file",
-                    str(self.config_path),
-                    "--input",
-                    message
-                ]
+            import shutil
+            nat_bin = shutil.which("nat") or str(venv_bin / "nat")
+            if not nat_bin or not Path(nat_bin).exists():
+                raise RuntimeError("nat CLI not found in current venv")
+            cmd = [nat_bin, "run", "--config_file", str(self.config_path), "--input", message]
 
             result = await asyncio.create_subprocess_exec(*cmd,
                                                           stdout=asyncio.subprocess.PIPE,

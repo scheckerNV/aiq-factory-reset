@@ -31,7 +31,7 @@ llms:
   #   max_tokens: 1024
 
 workflow:
-  _type: react_agent
+  _type: tool_calling_agent
   tool_names:
     - gpu_status
     - gpu_run_diagnostics
@@ -42,4 +42,3 @@ workflow:
     - grafana_create_dashboard
   llm_name: nim_llm
   verbose: true
-  parse_agent_response_max_retries: 5
