@@ -12,7 +12,7 @@ echo "🚀 Starting DCGM Agent Chat UI..."
 echo "Project root: $PROJECT_ROOT"
 echo "UI directory: $UI_DIR"
 
-FACTORY_ROOT="$(cd "$UI_DIR/../.." && pwd)"  # …/examples/factory_reset
+FACTORY_ROOT="$(cd "$UI_DIR/.." && pwd)"  # …/examples/factory_reset
 CONFIG_PATH="$FACTORY_ROOT/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml"
 ALT_CONFIG="$PROJECT_ROOT/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml"
 
@@ -186,7 +186,7 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 # Set environment variables for the backend
-export DCGM_CONFIG="dcgm_agent.yml"
+export DCGM_CONFIG="$CONFIG_PATH"
 export NIM_BASE_URL="http://localhost:8000/v1"
 
 # Verify environment setup
