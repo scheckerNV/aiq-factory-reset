@@ -1,15 +1,19 @@
 # DCGM Expert: Setup and Usage
 
-This guide shows how to bring up DCGM metrics (dcgm-exporter → Prometheus → Grafana) and use the DCGM Expert agent tools on a DGX node.
+This guide shows how to set up DCGM monitoring and analysis tools that work with both single nodes and BCM-managed clusters (DGX, GB300, H100, etc.).
 
-## 1) Prerequisites (on the DGX node)
+## 1) Prerequisites
 
-- NVIDIA driver installed; GPUs visible
-- DCGM hostengine running:
+### On Compute Nodes (GPU nodes)
+Each compute node with GPUs needs:
+- **NVIDIA driver installed**: GPUs must be visible to the system
+- **DCGM hostengine running**:
 ```bash
 sudo systemctl enable --now nvidia-dcgm
+# Verify DCGM is working
+dcgmi discovery -l
 ```
-- Docker + NVIDIA Container Toolkit:
+- **Docker + NVIDIA Container Toolkit** (for monitoring stack):
 ```bash
 sudo apt-get install -y nvidia-container-toolkit
 sudo nvidia-ctk runtime configure --runtime=docker
@@ -18,13 +22,48 @@ sudo systemctl restart docker
 docker run --rm --gpus all nvidia/cuda:12.3.2-base-ubuntu22.04 nvidia-smi
 ```
 
-## 2) Environment configuration
-
-Use localhost for API calls from the agent running on DGX, and your DGX IP for returned links:
+### On Management/Head Node (where you run the tools)
+- **SSH access to compute nodes**: Passwordless SSH must work to all target nodes
 ```bash
-export PROM_URL=http://<DGX_IP>:9090
+# Test SSH access to your compute nodes
+ssh <compute_node_ip> 'dcgmi discovery -l'
+```
+- **BCM cluster management**: For auto-discovery via `cmsh -c "device list"`
+- **Python environment**: AIQ toolkit installed and configured
+
+### Network Requirements
+- **Compute nodes reachable**: SSH connectivity from management node to compute nodes
+- **Port accessibility**: For distributed monitoring (dcgm-exporter: 9400, Prometheus: 9090, Grafana: 3000)
+- **DNS/IP resolution**: Nodes must be accessible by hostname or IP
+
+## 2) Usage Modes
+
+### Single Node Mode (Original dcgm_register.py)
+Run tools directly on a GPU compute node with local DCGM and Docker.
+
+### Cluster Mode (New cluster DCGM tools)
+Run tools from a management/head node to analyze multiple GPU compute nodes via SSH.
+
+## 3) Environment Configuration
+
+### For Single Node Mode
+Use localhost for API calls from the agent running on GPU node:
+```bash
+export PROM_URL=http://localhost:9090
 export GRAFANA_URL=http://localhost:3000
-export PUBLIC_HOST=<DGX_IP>
+export GRAFANA_ADMIN_PASSWORD='NewStrongPass!'
+export GF_CREDS=admin:$GRAFANA_ADMIN_PASSWORD
+```
+
+### For Cluster Mode
+Configure for distributed monitoring across multiple nodes:
+```bash
+# Central monitoring node (usually headnode)
+export CLUSTER_HOST="bcm11-headnode"  # Your headnode hostname
+export CLUSTER_USER="hpcuser1"        # SSH user for compute nodes
+export PROM_URL=http://<HEADNODE_IP>:9090
+export GRAFANA_URL=http://<HEADNODE_IP>:3000
+export PUBLIC_HOST=<HEADNODE_IP>
 export GRAFANA_ADMIN_PASSWORD='NewStrongPass!'
 export GF_CREDS=admin:$GRAFANA_ADMIN_PASSWORD
 ```
@@ -37,74 +76,114 @@ docker volume create grafana-data
 # sudo mkdir -p /var/lib/grafana && sudo chown -R 472:472 /var/lib/grafana
 ```
 
-## 3) Start (or heal) the monitoring stack
+## 4) DCGM Analysis Tools
 
-Starts dcgm-exporter, Prometheus, and Grafana; waits for readiness.
-```bash
-nat run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml --input "prom_stack_start"
-```
-Expect:
-- dcgm-exporter: metrics=200
-- Prometheus: ready=200
-- Grafana: health=200, login=200
+### Cluster-wide Analysis (Recommended for BCM clusters)
 
-Force a fresh start (only once if needed):
+#### Quick Cluster GPU Status
+Get GPU status across all compute nodes:
 ```bash
-nat run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml --input "prom_stack_start force=true"
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_gpu_status"
 ```
 
-## 4) Using the DCGM Expert tools
-
-You can use explicit tool calls (most reliable) or NL one‑shot prompts.
-
-### Explicit tool calls (recommended)
-
-- Create a Grafana dashboard:
+#### Target Specific Nodes
+Analyze specific nodes or IP ranges:
 ```bash
-nat run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml \
-  --input "grafana_create_dashboard name=GPU_Overview refresh=30s overwrite=false"
+# Specific nodes by hostname pattern
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_gpu_status nodes=r1-p1-gb300-n01,r1-p1-gb300-n02"
+
+# IP range
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_gpu_status nodes=10.102.112.15-20"
 ```
 
-- Query Prometheus summaries (auto-fallback on metric names):
+#### Cluster Health Checks
+Enable DCGM health monitoring across the cluster:
 ```bash
-aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml --input "prom_query"
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_gpu_enable_health systems=all"
+
+# Wait for health data to collect (~60s), then check
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_gpu_health_check"
 ```
 
-- Run a specific PromQL:
+#### Run Cluster Diagnostics
+Execute DCGM diagnostics across multiple nodes:
 ```bash
-aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml \
-  --input "prom_query query=max by (gpu) (DCGM_FI_DEV_GPU_TEMP)"
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_gpu_diagnostics level=r2 nodes=all"
 ```
 
-- Enable DCGM health and check status:
+### Single Node Analysis (Original tools)
+
+#### Start monitoring stack on current node
 ```bash
-aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml --input "gpu_enable_health systems=a"
-sleep 65
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml --input "prom_stack_start"
+```
+
+#### Single node GPU status and diagnostics
+```bash
+# Check GPU health on current node
 aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml --input "gpu_status"
+
+# Run diagnostics on current node
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml --input "gpu_run_diagnostics level=r2"
 ```
 
-### NL one‑shot prompts (be explicit)
+## 5) Distributed Monitoring Setup
 
-If you want NL, make it a single, explicit one‑shot and include the tool with params as plain text (no markdown/backticks). Examples:
-- grafana_create_dashboard name=GPU_Overview refresh=30s overwrite=false
-- prom_query
-- prom_query query=avg by (gpu) (avg_over_time(DCGM_FI_DEV_GPU_UTIL[5m]))
-- gpu_status
-
-Tips:
-- Avoid multi‑step plans; call one tool per request.
-- The agent accepts JSON or key=value, but plain key=value is most reliable.
-
-## 5) Grafana access
-
-If off‑node, use the returned SSH tunnel one‑liner to open locally, or browse:
-- Prometheus: http://<DGX_IP>:9090
-- Grafana: http://<DGX_IP>:3000
-
-## 6) Troubleshooting quick checks
-
+### Deploy dcgm-exporter across cluster nodes
+Deploy monitoring stack across multiple nodes:
 ```bash
-# Health codes
+# Deploy to all compute nodes
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_deploy_monitoring nodes=all"
+
+# Deploy to specific nodes
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_deploy_monitoring nodes=10.102.112.15-20"
+```
+
+### Create cluster-wide dashboards
+```bash
+# Create comprehensive cluster dashboard
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_create_dashboard name=GB300_Cluster_Overview"
+```
+
+## 6) Accessing Monitoring Services
+
+### Local Access (same network)
+- **Prometheus**: http://\<HEADNODE_IP\>:9090
+- **Grafana**: http://\<HEADNODE_IP\>:3000
+
+### Remote Access (SSH tunnel)
+```bash
+# Create SSH tunnel for Grafana
+ssh -L 3001:localhost:3000 <username>@<headnode_ip>
+# Then access: http://localhost:3001
+```
+
+## 7) Troubleshooting
+
+### Verify Prerequisites
+```bash
+# Test SSH access to compute nodes
+ssh <compute_node_ip> 'dcgmi discovery -l'
+
+# Check BCM node discovery
+cmsh -c "device list -f ip,hostname,category"
+
+# Verify DCGM on specific node
+ssh <compute_node_ip> 'systemctl status nvidia-dcgm'
+```
+
+### Check Service Health
+```bash
+# Health codes for single-node monitoring
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:9400/metrics
 curl -s -o /dev/null -w '%{http_code}\n' $PROM_URL/-/ready
 curl -s -o /dev/null -w '%{http_code}\n' $GRAFANA_URL/api/health
@@ -113,12 +192,37 @@ curl -s -o /dev/null -w '%{http_code}\n' $GRAFANA_URL/api/health
 docker ps --format 'table {{.Names}}\t{{.Status}}'
 docker logs --tail=200 grafana
 
-# Grafana with named volume example:
-# docker run -d --restart unless-stopped --name grafana --net=host \
-#   -e GF_SECURITY_ADMIN_PASSWORD="$GRAFANA_ADMIN_PASSWORD" \
-#   -v grafana-data:/var/lib/grafana grafana/grafana-oss:latest
+# Check cluster-wide DCGM health
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_health_check"
 ```
 
-## 7) Files of interest
-- Agent config: `examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml`
-- Tools: `examples/factory_reset/src/aiq_dgx_factory_reset/dcgm_register.py`
+### Common Issues
+- **SSH failures**: Verify passwordless SSH and correct usernames
+- **DCGM not found**: Ensure `nvidia-dcgm` service is running on compute nodes
+- **No GPU discovery**: Check NVIDIA drivers and GPU visibility
+- **Permission denied**: May need sudo access for Docker operations
+- **Port conflicts**: Check if monitoring ports (9090, 3000, 9400) are available
+
+## 8) Files of Interest
+
+### Configuration Files
+- **Single node config**: `examples/factory_reset/src/aiq_dgx_factory_reset/configs/dcgm_agent.yml`
+- **Cluster config**: `examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml`
+
+### Tool Implementation Files
+- **Single node tools**: `examples/factory_reset/src/aiq_dgx_factory_reset/dcgm_register.py`
+- **Cluster tools**: `examples/factory_reset/src/aiq_dgx_factory_reset/cluster_dcgm_register.py`
+- **Node assessment**: `examples/factory_reset/scripts/node_assessment.sh`
+
+### Example Usage for Your GB300 System
+Based on your setup, here are specific commands:
+```bash
+# Get status of all 18 GB300 nodes
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_gpu_status nodes=10.102.112.15-32"
+
+# Enable health monitoring on your GB300 cluster
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_gpu_enable_health systems=all nodes=r1-p1-gb300-n01-18"
+```
