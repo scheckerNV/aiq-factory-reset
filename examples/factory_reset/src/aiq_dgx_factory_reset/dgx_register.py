@@ -230,7 +230,8 @@ print("✅ DGX Node Assessment tool registered successfully")
 class NodeResultsReaderConfig(FunctionBaseConfig, name="node_results_reader"):
     cluster_host: str = Field(description="Cluster head hostname/IP for SSH (or localhost)")
     cluster_user: str = Field(description="SSH username for cluster access")
-    results_directory: str = Field(description="Assessment results directory glob, e.g., /tmp/node_assessment_*")
+    results_directory: str = Field(default="/tmp/node_assessment_*",
+                                   description="Assessment results directory glob pattern")
 
 
 @register_function(config_type=NodeResultsReaderConfig)
@@ -244,20 +245,25 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
             files_map = {
                 "summary": ["00_SUMMARY.txt"],
                 "devices": ["01_device_status.txt", "02_device_list.txt"],
-                "bcm": ["16_bcm_version_info.txt", "17_pkg_cmdaemon.txt", "18_pkg_cluster_tools.txt"],
-                "hardware": ["19_hardware_profiles.txt", "20_os_versions.txt", "21_bios_versions.txt"],
-                "firmware": ["22_firmware_info.txt", "23_sample_bios_settings.txt"],
-                "bmc": ["24_bmc_info.txt"],
-                "overview": ["25_device_overview.txt", "26_burn_configs.txt"],
+                "connectivity": ["03_connectivity.txt"],
+                "system": ["04_system_info.txt"],
+                "gpu": ["05_gpu_info.txt"],
+                "dcgm": ["06_dcgm_status.txt"],
+                "network": ["07_network_interfaces.txt"],
+                "storage": ["08_storage_info.txt"],
+                "hardware": ["09_hardware_info.txt"],
+                "overview": ["01_device_status.txt", "04_system_info.txt", "05_gpu_info.txt", "06_dcgm_status.txt"],
                 "full": [
                     "00_SUMMARY.txt",
                     "01_device_status.txt",
                     "02_device_list.txt",
-                    "16_bcm_version_info.txt",
-                    "19_hardware_profiles.txt",
-                    "20_os_versions.txt",
-                    "24_bmc_info.txt",
-                    "25_device_overview.txt"
+                    "03_connectivity.txt",
+                    "04_system_info.txt",
+                    "05_gpu_info.txt",
+                    "06_dcgm_status.txt",
+                    "07_network_interfaces.txt",
+                    "08_storage_info.txt",
+                    "09_hardware_info.txt"
                 ],
                 "all": ["*.txt"],
             }

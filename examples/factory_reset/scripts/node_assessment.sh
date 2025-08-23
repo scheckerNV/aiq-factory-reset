@@ -1,17 +1,17 @@
 #!/bin/bash
-# node_assessment.sh - Comprehensive BCM node assessment (OS/BIOS/Firmware/BMC/Health)
+# universal_cluster_assessment.sh - Works with any BCM-managed cluster
 
 OUTPUT_DIR="/tmp/node_assessment_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$OUTPUT_DIR"
 
-echo "Starting comprehensive node assessment..."
+echo "Starting universal cluster assessment..."
 echo "Output directory: $OUTPUT_DIR"
 
 run_cmd() {
   local cmd="$1"
   local output_file="$2"
   local description="$3"
-  local timeout_seconds="${4:-30}"  # Default 30 second timeout
+  local timeout_seconds="${4:-30}"
   echo "[$description] Running: $cmd"
   {
     echo "Command: $cmd"
@@ -32,97 +32,110 @@ run_cmd() {
   } > "$OUTPUT_DIR/$output_file"
 }
 
-# 1) Basic node information
+# Auto-detect compute node categories and IPs
+echo "Auto-detecting cluster configuration..."
+
+# Get all categories with node counts > 0
+CATEGORIES=$(cmsh -c "category list" 2>/dev/null | awk '$3 > 0 && $1 !~ /^(default|k8s|slogin)/ {print $1}' | tr '\n' ' ')
+echo "Found compute categories: $CATEGORIES"
+
+# Get IPs for compute categories (exclude management/infrastructure)
+if [ -n "$CATEGORIES" ]; then
+    COMPUTE_IPS=""
+    for category in $CATEGORIES; do
+        category_ips=$(cmsh -c "device list -f ip,category" 2>/dev/null | grep "$category" | awk '{print $1}' | tr '\n' ' ')
+        COMPUTE_IPS="$COMPUTE_IPS $category_ips"
+    done
+else
+    # Fallback: get all IPs except headnode
+    COMPUTE_IPS=$(cmsh -c "device list -f ip,hostname" 2>/dev/null | grep -v headnode | awk '{print $1}' | tr '\n' ' ')
+fi
+
+COMPUTE_IPS=$(echo $COMPUTE_IPS | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u | tr '\n' ' ')
+NODE_COUNT=$(echo $COMPUTE_IPS | wc -w)
+
+echo "Found $NODE_COUNT compute nodes: $COMPUTE_IPS"
+
+# 1) BCM cluster status
 run_cmd 'cmsh -c "device status"' \
         "01_device_status.txt" \
-        "Overall device status"
+        "Overall device status from BCM"
 
-# Use proper formatting for the device list command
-run_cmd 'cmsh -t -c "device list -f hostname,status,mac,ip,category,softwareimage"' \
+run_cmd 'cmsh -c "device list -f hostname,status,mac,ip,category,softwareimage"' \
         "02_device_list.txt" \
-        "Detailed device information"
+        "Detailed device information from BCM"
 
-# 2) BCM and package versions
-run_cmd 'cmsh -c "main; versioninfo"' \
-        "16_bcm_version_info.txt" \
-        "BCM version information"
-
-run_cmd 'cm-package-release-info -f cmdaemon' \
-        "17_pkg_cmdaemon.txt" \
-        "BCM cmdaemon package release info"
-
-run_cmd 'cm-package-release-info -f cluster-tools' \
-        "18_pkg_cluster_tools.txt" \
-        "BCM cluster-tools package release info"
-
-# 3) Hardware information through hardware-profile
-run_cmd 'cmsh -c "device hardwareprofile list"' \
-        "19_hardware_profiles.txt" \
-        "Hardware profiles in the cluster"
-
-# 4) Node OS versions - using a more reliable approach
-# Use foreach with specific node type instead of wildcard
-run_cmd 'cmsh -c "device foreach -t physicalnode (cat /etc/os-release | grep ^VERSION)"' \
-        "20_os_versions.txt" \
-        "OS versions across physical nodes" \
-        90
-
-# 5) BIOS information
-run_cmd 'cmsh -c "device foreach -t physicalnode (dmidecode -s bios-version)"' \
-        "21_bios_versions.txt" \
-        "BIOS versions across nodes" \
-        90
-
-# 6) Firmware management
-run_cmd 'cmsh -c "device firmware info"' \
-        "22_firmware_info.txt" \
-        "Available firmware files"
-
-# 7) BIOS settings status - first check if model is set
-# Split into two commands - first check if the BIOS model is defined
-run_cmd 'cmsh -c "device use node001; biossettings; get model"' \
-        "23a_bios_model_check.txt" \
-        "Check BIOS model for node001"
-
-# Then try getting the settings status, with error handling
-run_cmd 'cmsh -c "device use node001; biossettings; status 2>/dev/null || echo \"BIOS settings not available or model not defined\""' \
-        "23_sample_bios_settings.txt" \
-        "Sample BIOS settings for node001"
-
-# 8) BMC status check using ipmitool
-run_cmd 'cmsh -c "device foreach -t physicalnode (ipmitool mc info 2>/dev/null || echo \"BMC not accessible on this node\")"' \
-        "24_bmc_info.txt" \
-        "BMC information where accessible" \
+# 2) Node connectivity test
+run_cmd "for ip in $COMPUTE_IPS; do echo \"=== \$ip ===\"; ssh -o ConnectTimeout=5 \$ip 'hostname && uptime' 2>/dev/null || echo \"Failed to connect to \$ip\"; done" \
+        "03_connectivity.txt" \
+        "Node connectivity test" \
         120
 
-# 9) Device health overview
-run_cmd 'cmsh -c "device overview"' \
-        "25_device_overview.txt" \
-        "Cluster health overview"
+# 3) OS and system info
+run_cmd "for ip in $COMPUTE_IPS; do echo \"=== \$ip ===\"; ssh \$ip 'echo \"OS:\"; cat /etc/os-release 2>/dev/null | grep VERSION || echo \"Unknown OS\"; echo \"Kernel:\"; uname -r 2>/dev/null || echo \"Unknown kernel\"; echo \"Memory:\"; free -h 2>/dev/null | head -2 || echo \"Memory info unavailable\"' 2>/dev/null || echo \"Failed to get system info from \$ip\"; done" \
+        "04_system_info.txt" \
+        "OS and system information" \
+        120
 
-# 10) Check for burn configurations
-run_cmd 'cmsh -c "partition use base; burnconfigs list 2>/dev/null || echo \"No burn configs available\""' \
-        "26_burn_configs.txt" \
-        "Available hardware burn configurations"
+# 4) GPU detection (if available)
+run_cmd "for ip in $COMPUTE_IPS; do echo \"=== \$ip ===\"; ssh \$ip 'if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi --query-gpu=index,name,driver_version,memory.total,power.limit --format=csv,noheader 2>/dev/null; else echo \"No NVIDIA GPUs or nvidia-smi not found\"; fi' 2>/dev/null || echo \"Failed to get GPU info from \$ip\"; done" \
+        "05_gpu_info.txt" \
+        "GPU information (if available)" \
+        120
 
-# 11) Try using sysinfo for detailed hardware info for one node
-run_cmd 'cmsh -c "device use node001; sysinfo"' \
-        "27_sysinfo_node001.txt" \
-        "Detailed system info for node001"
+# 5) DCGM status (if available)
+run_cmd "for ip in $COMPUTE_IPS; do echo \"=== \$ip ===\"; ssh \$ip 'if command -v dcgmi >/dev/null 2>&1; then echo \"DCGM Discovery:\"; dcgmi discovery -l 2>/dev/null; else echo \"DCGM not installed\"; fi' 2>/dev/null || echo \"Failed to connect to \$ip\"; done" \
+        "06_dcgm_status.txt" \
+        "DCGM status (if available)" \
+        120
 
-# 12) Summary
+# 6) Network interfaces
+run_cmd "for ip in $COMPUTE_IPS; do echo \"=== \$ip ===\"; ssh \$ip 'ip addr show 2>/dev/null | grep -E \"^[0-9]+:\" | head -10 || echo \"Network info unavailable\"' 2>/dev/null || echo \"Failed to get network info from \$ip\"; done" \
+        "07_network_interfaces.txt" \
+        "Network interface information" \
+        120
+
+# 7) Storage info
+run_cmd "for ip in $COMPUTE_IPS; do echo \"=== \$ip ===\"; ssh \$ip 'df -h 2>/dev/null | head -10 || echo \"Storage info unavailable\"' 2>/dev/null || echo \"Failed to get storage info from \$ip\"; done" \
+        "08_storage_info.txt" \
+        "Storage information" \
+        90
+
+# 8) Hardware detection
+run_cmd "for ip in $COMPUTE_IPS; do echo \"=== \$ip ===\"; ssh \$ip 'echo \"CPU:\"; lscpu 2>/dev/null | grep \"Model name\" || echo \"CPU info unavailable\"; echo \"Memory:\"; dmidecode -t memory 2>/dev/null | grep \"Size:\" | head -5 || echo \"Memory details unavailable\"' 2>/dev/null || echo \"Failed to get hardware info from \$ip\"; done" \
+        "09_hardware_info.txt" \
+        "Hardware information" \
+        120
+
+# Summary
 {
-  echo "BCM Node Assessment Summary"
-  echo "============================"
+  echo "Universal Cluster Assessment Summary"
+  echo "==================================="
   echo "Assessment Date: $(date)"
   echo "Output Directory: $OUTPUT_DIR"
+  echo "Compute Categories: $CATEGORIES"
+  echo "Compute Node Count: $NODE_COUNT"
+  echo "Compute Node IPs: $COMPUTE_IPS"
   echo
   echo "Files Generated:"
-  ls -la "$OUTPUT_DIR/"*.txt | awk '{print $9, "("$5" bytes)"}' | sed 's|.*/||'
+  ls -la "$OUTPUT_DIR/"*.txt 2>/dev/null | awk '{print $9, "("$5" bytes)"}' | sed 's|.*/||'
+  echo
+  echo "Key Files to Review:"
+  echo "- 01_device_status.txt: BCM cluster status"
+  echo "- 03_connectivity.txt: Node SSH connectivity"
+  echo "- 05_gpu_info.txt: GPU hardware details (if available)"
+  echo "- 06_dcgm_status.txt: DCGM functionality (if available)"
+  echo "- 04_system_info.txt: OS and system information"
 } > "$OUTPUT_DIR/00_SUMMARY.txt"
 
-# Create symlink for easy access by the results reader
-ln -sfn "$OUTPUT_DIR" /tmp/node_assessment_latest 2>/dev/null || true
+# Create a stable symlink for easy discovery by the Python tools
+SYMLINK_PATH="/tmp/node_assessment_latest"
+if [ -L "$SYMLINK_PATH" ]; then
+    rm "$SYMLINK_PATH"
+fi
+ln -sf "$OUTPUT_DIR" "$SYMLINK_PATH"
 
 echo "Assessment complete! Results saved to: $OUTPUT_DIR"
-echo "Summary file: $OUTPUT_DIR/00_SUMMARY.txt"
+echo "Symlink created: $SYMLINK_PATH -> $OUTPUT_DIR"
+echo "Cluster type: $(echo $CATEGORIES | wc -w) category(ies) detected"
+echo "Nodes found: $NODE_COUNT"
