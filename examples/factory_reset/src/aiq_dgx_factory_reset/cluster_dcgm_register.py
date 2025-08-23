@@ -358,7 +358,7 @@ async def cluster_gpu_status(config: ClusterGPUStatusConfig, builder: Builder):
             if "GPU STATUS" in stdout:
                 gpu_lines = [
                     line for line in stdout.split("=== GPU STATUS ===")[1].split("\n") if line.strip() and "," in line
-                ][:3]  # Show first 3 GPUs
+                ]  # Show all GPUs
                 if gpu_lines:
                     temps = []
                     for line in gpu_lines:
