@@ -1,97 +1,68 @@
 # Cluster DCGM Agent Configuration
-#
 # Provides cluster-wide DCGM analysis tools for BCM-managed GPU clusters.
-# Works with any cluster (GB300, DGX, H100, etc.) via SSH from headnode.
 
-name: cluster_dcgm_agent
-description: Cluster-wide DCGM analysis and monitoring tools for BCM GPU clusters
+general:
+  use_uvloop: true
 
-# Agent configuration
-agent:
-  agent_type: react
-  llm_model_name: meta-llama/Llama-3.1-70B-Instruct
-  system_message: |
-    You are a cluster DCGM expert specializing in multi-node GPU analysis and monitoring.
-
-    You have access to cluster-wide DCGM tools that work across BCM-managed compute nodes via SSH.
-    These tools auto-discover nodes and support flexible targeting (all nodes, specific IPs, ranges, etc.).
-
-    Available cluster tools:
-    - cluster_gpu_status: Check GPU status across multiple nodes
-    - cluster_gpu_enable_health: Enable DCGM health monitoring cluster-wide
-    - cluster_gpu_health_check: Check health status across nodes
-    - cluster_gpu_diagnostics: Run DCGM diagnostics on multiple nodes
-    - cluster_deploy_monitoring: Deploy dcgm-exporter to cluster nodes
-    - cluster_create_dashboard: Create cluster-wide Grafana dashboards
-
-    When analyzing clusters:
-    1. Auto-discover nodes via BCM if no specific nodes are requested
-    2. Handle unreachable/misconfigured nodes gracefully
-    3. Provide clear summaries with node-by-node status
-    4. Suggest next steps for any issues found
-    5. Support various node targeting formats (IPs, ranges, hostnames)
-
-    Always be specific about which nodes you're analyzing and provide actionable recommendations.
-
-# Function configurations
 functions:
-  # Cluster GPU status monitoring
-  - function_name: cluster_gpu_status
-    config:
-      cluster_host: bcm11-headnode  # Update with your headnode
-      cluster_user: hpcuser1        # Update with your SSH user
-      ssh_timeout: 30
+  cluster_gpu_status:
+    _type: aiq_dgx_factory_reset/cluster_gpu_status
+    cluster_host: bcm11-headnode
+    cluster_user: hpcuser1
+    ssh_timeout: 30
 
-  # Cluster health monitoring
-  - function_name: cluster_gpu_enable_health
-    config:
-      cluster_host: bcm11-headnode
-      cluster_user: hpcuser1
-      ssh_timeout: 30
+  cluster_gpu_enable_health:
+    _type: aiq_dgx_factory_reset/cluster_gpu_enable_health
+    cluster_host: bcm11-headnode
+    cluster_user: hpcuser1
+    ssh_timeout: 30
 
-  - function_name: cluster_gpu_health_check
-    config:
-      cluster_host: bcm11-headnode
-      cluster_user: hpcuser1
-      ssh_timeout: 45
+  cluster_gpu_health_check:
+    _type: aiq_dgx_factory_reset/cluster_gpu_health_check
+    cluster_host: bcm11-headnode
+    cluster_user: hpcuser1
+    ssh_timeout: 45
 
-  # Cluster diagnostics
-  - function_name: cluster_gpu_diagnostics
-    config:
-      cluster_host: bcm11-headnode
-      cluster_user: hpcuser1
-      ssh_timeout: 60
-      dcgm_timeout: 180  # Longer timeout for diagnostics
+  cluster_gpu_diagnostics:
+    _type: aiq_dgx_factory_reset/cluster_gpu_diagnostics
+    cluster_host: bcm11-headnode
+    cluster_user: hpcuser1
+    ssh_timeout: 60
+    dcgm_timeout: 180
 
-  # Monitoring deployment
-  - function_name: cluster_deploy_monitoring
-    config:
-      cluster_host: bcm11-headnode
-      cluster_user: hpcuser1
-      ssh_timeout: 90  # Longer for Docker operations
+  cluster_deploy_monitoring:
+    _type: aiq_dgx_factory_reset/cluster_deploy_monitoring
+    cluster_host: bcm11-headnode
+    cluster_user: hpcuser1
+    ssh_timeout: 90
 
-  # Dashboard creation
-  - function_name: cluster_create_dashboard
-    config:
-      cluster_host: bcm11-headnode
-      cluster_user: hpcuser1
+  cluster_create_dashboard:
+    _type: aiq_dgx_factory_reset/cluster_create_dashboard
+    cluster_host: bcm11-headnode
+    cluster_user: hpcuser1
 
-# Optional: Include single-node tools for comparison
-  - function_name: gpu_status
-    config: {}
+  # Include single-node tools for comparison
+  gpu_status:
+    _type: aiq_dgx_factory_reset/gpu_status
 
-# LLM configuration
 llms:
-  - llm_name: meta-llama/Llama-3.1-70B-Instruct
-    llm_type: openai_chat
-    api_base: https://integrate.api.nvidia.com/v1
-    api_key_env_var: NVIDIA_API_KEY
-    model_kwargs:
-      temperature: 0.1
-      max_tokens: 2000
-
-# Integration settings
-integrations:
-  nvidia_nim:
-    api_key_env_var: NVIDIA_API_KEY
+  nim_llm:
+    _type: openai
+    model_name: meta-llama/Llama-3.1-70B-Instruct
+    temperature: 0.1
+    max_tokens: 2000
     base_url: https://integrate.api.nvidia.com/v1
+    api_key_env_var: NVIDIA_API_KEY
+
+workflow:
+  _type: tool_calling_agent
+  tool_names:
+    - cluster_gpu_status
+    - cluster_gpu_enable_health
+    - cluster_gpu_health_check
+    - cluster_gpu_diagnostics
+    - cluster_deploy_monitoring
+    - cluster_create_dashboard
+    - gpu_status
+  llm_name: nim_llm
+  verbose: true
