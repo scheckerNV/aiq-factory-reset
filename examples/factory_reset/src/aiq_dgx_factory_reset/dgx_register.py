@@ -40,6 +40,17 @@ def _truncate_text(text: str, limit: int = MAX_FILE_READ_CHARS) -> str:
     return text[:limit] + "\n...[truncated]...\n"
 
 
+# ANSI escape sequence pattern for cleaning terminal output
+ANSI_ESCAPE = re.compile(r'\x1B[[0-?][ -/][@-~]')
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from text"""
+    if not text:
+        return text
+    return ANSI_ESCAPE.sub('', text)
+
+
 def _extract_cmsh_commands(text: str) -> list[str]:
     cmds: list[str] = []
     for line in (text or "").splitlines():
@@ -436,6 +447,23 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         CONTEXT\n---\n{context}\n---
         """)
 
+    summarization_prompt = PromptTemplate.from_template("""
+        You are a DGX/BCM SRE. Summarize the node assessment for the user's question.
+
+        Question: {question}
+
+        Assessment Extract (selected files/overview):
+        {results}
+
+        Write a concise, actionable summary:
+        - Current cluster state: counts of UP/DOWN/unreachable, notable health issues
+        - Critical incidents or unreachable devices
+        - Configuration/collection issues (if any) and what they imply
+        - Recommended next steps (2-5 bullets), safe and non-destructive
+
+        Keep it tight. Do not dump raw file contents.
+        """)
+
     class OrchestratorState(TypedDict, total=False):
         input: str
         assessment: str
@@ -449,6 +477,8 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         decision_json: str
         results_query: str
         results_directory: str
+        results_text: str
+        results_dir: str
 
     async def assess_node(state: OrchestratorState):
         logger.info("🔍 assess_node: Starting node assessment...")
@@ -488,26 +518,33 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         else:
             results_query_with_dir = results_query
 
-        # Refresh results after assessment to include detailed results
+        # Read detailed results for LLM analysis (but don't dump in final output)
         logger.info("📖 assess_node: Reading assessment results with query: %s", results_query_with_dir)
-        refreshed = ""
+        results_text = ""
         if node_reader:
             try:
-                refreshed = await asyncio.wait_for(node_reader.ainvoke(results_query_with_dir),
-                                                   timeout=LOCAL_CMD_TIMEOUT)
+                raw_results = await asyncio.wait_for(node_reader.ainvoke(results_query_with_dir),
+                                                     timeout=LOCAL_CMD_TIMEOUT)
+                # Clean ANSI codes and store for LLM summarization
+                results_text = _strip_ansi(raw_results)
                 logger.info("✅ assess_node: Results read successfully")
             except Exception as e:
                 logger.warning("⚠️ assess_node: Failed to read results: %s", str(e))
-                refreshed = ""
+                results_text = ""
         else:
             logger.warning("⚠️ assess_node: No node_reader tool available")
 
-        combined_analysis = (state.get("analysis", "") or "")
-        if refreshed:
-            combined_analysis = (combined_analysis + "\n\n" + refreshed).strip()
+        # Keep analysis clean (no raw file dumps)
+        analysis = state.get("analysis", "") or ""
 
         logger.info("🏁 assess_node: Completed, returning state")
-        return {**state, "assessment": assess_out, "analysis": combined_analysis, "results_directory": results_dir}
+        return {
+            **state,
+            "assessment": assess_out,
+            "analysis": analysis,
+            "results_text": results_text,
+            "results_dir": results_dir
+        }
 
     async def analyze_and_decide(state: OrchestratorState):
         """
@@ -626,6 +663,41 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         logger.info("✅ analyze_and_decide: Analysis completed, action_type=%s", action_type)
         return {**state, "analysis": analysis_report, "action_type": action_type, "decision_json": decision_json_out}
 
+    async def summarize_results(state: OrchestratorState):
+        """Use LLM to analyze assessment results and produce concise summary"""
+        logger.info("📝 summarize_results: Starting intelligent summarization...")
+
+        try:
+            reasoning_llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+        except Exception as e:
+            logger.error("❌ summarize_results: Could not acquire LLM: %s", str(e))
+            return {**state, "analysis": f"❌ Could not acquire LLM for summarization: {e}"}
+
+        # Get the detailed results and user question
+        results = _truncate_text(state.get("results_text", ""), 100_000)
+        question = state.get("input", "")
+
+        if not results.strip():
+            logger.warning("⚠️ summarize_results: No results text to summarize")
+            return {**state, "analysis": "❌ No assessment results available for summarization"}
+
+        # Use LLM to create intelligent summary
+        chain = summarization_prompt | reasoning_llm | StrOutputParser()
+        try:
+            summary = await asyncio.wait_for(chain.ainvoke({
+                "question": question, "results": results
+            }),
+                                             timeout=LLM_STEP_TIMEOUT)
+            logger.info("✅ summarize_results: LLM summarization completed")
+        except asyncio.TimeoutError:
+            logger.warning("⏰ summarize_results: LLM summarization timed out")
+            summary = f"❌ Summary unavailable (LLM timed out after {LLM_STEP_TIMEOUT}s)"
+        except Exception as e:
+            logger.error("❌ summarize_results: LLM error: %s", str(e))
+            summary = f"❌ Summary unavailable (LLM error): {e}"
+
+        return {**state, "analysis": summary}
+
     # ReAct agent removed in minimal workflow
 
     async def generate_commands(state: OrchestratorState):
@@ -704,44 +776,16 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         """Synthesize results for diagnostics-only requests (no command generation/execution)"""
         logger.info("📝 synthesize_diagnostics_only: Starting synthesis...")
 
-        # Extract the detailed results from the analysis
-        analysis = state.get("analysis", "") or ""
-        assessment_log = state.get("assessment", "") or ""
+        # Get the LLM-generated summary from the analysis
+        llm_summary = state.get("analysis", "") or ""
+        results_dir = state.get("results_dir", "N/A")
 
-        # Split analysis into reasoning part and detailed results part
-        reasoning_part = ""
-        detailed_results = ""
-
-        if analysis:
-            # The analysis contains reasoning + detailed file contents
-            # Look for the file contents section (starts with 📄)
-            analysis_lines = analysis.split("\n")
-            reasoning_lines = []
-            results_lines = []
-            in_results_section = False
-
-            for line in analysis_lines:
-                if line.strip().startswith("📄") or in_results_section:
-                    in_results_section = True
-                    results_lines.append(line)
-                else:
-                    reasoning_lines.append(line)
-
-            reasoning_part = "\n".join(reasoning_lines).strip()
-            detailed_results = "\n".join(results_lines).strip()
-
-        # Build comprehensive output
+        # Build clean output with just the intelligent summary
         final = ("# 🧭 DGX Orchestration (Diagnostics Only)\n\n"
-                 "## Reasoning and Decision\n" + reasoning_part + "\n\n"
-                 "## Assessment Script Log\n" + assessment_log + "\n\n")
-
-        if detailed_results:
-            final += "## Detailed Assessment Results\n" + detailed_results + "\n\n"
-
-        final += ("## Recommendation\n"
-                  "Based on the analysis above, see the diagnostic findings. "
-                  f"Results directory: {state.get('results_directory', 'N/A')}.\n"
-                  "No BCM commands were generated or executed.\n")
+                 "## Assessment Summary\n" + llm_summary + "\n\n"
+                 "## Notes\n"
+                 f"Results directory: {results_dir}\n"
+                 "No BCM commands were generated or executed.\n")
 
         logger.info("✅ synthesize_diagnostics_only: Synthesis completed")
         return {**state, "final_output": final}
@@ -758,8 +802,8 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         if action_type in ("generate_bcm_commands", "reset_nodes"):
             logger.info("🔀 route_after_assess: %s -> generate", action_type)
             return "generate"
-        logger.info("🔀 route_after_assess: %s -> synthesize_diagnostics_only", action_type)
-        return "synthesize_diagnostics_only"
+        logger.info("🔀 route_after_assess: %s -> summarize", action_type)
+        return "summarize"
 
     # No post-agent routing in minimal orchestrator
 
@@ -767,6 +811,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     graph = StateGraph(OrchestratorState)
     graph.add_node("assess", assess_node)
     graph.add_node("analyze", analyze_and_decide)
+    graph.add_node("summarize", summarize_results)
     graph.add_node("generate", generate_commands)
     graph.add_node("execute", execute_commands)
     graph.add_node("synthesize", synthesize)
@@ -777,15 +822,15 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     # Always route to assess first
     graph.add_conditional_edges("analyze", route_after_analysis, {"assess": "assess"})
 
-    # After assessment, branch to generate or synthesize_diagnostics_only
-    graph.add_conditional_edges("assess",
-                                route_after_assess, {
-                                    "generate": "generate",
-                                    "synthesize_diagnostics_only": "synthesize_diagnostics_only",
-                                })
+    # After assessment, branch to generate or summarize
+    graph.add_conditional_edges("assess", route_after_assess, {
+        "generate": "generate",
+        "summarize": "summarize",
+    })
 
     graph.add_edge("generate", "execute")
     graph.add_edge("execute", "synthesize")
+    graph.add_edge("summarize", "synthesize_diagnostics_only")
     graph.add_edge("synthesize", END)
     graph.add_edge("synthesize_diagnostics_only", END)
 
