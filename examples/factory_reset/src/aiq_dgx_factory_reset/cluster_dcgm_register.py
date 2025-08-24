@@ -14,21 +14,14 @@ import asyncio
 import json
 import logging
 import re
-import shlex
-import socket
-from concurrent.futures import ThreadPoolExecutor
 from os import getenv
-from pathlib import Path
 from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Set
 from typing import Tuple
-from urllib.parse import urlparse
-from urllib.parse import urlunparse
 
-import requests
 from pydantic import Field
 
 from aiq.builder.builder import Builder
@@ -104,7 +97,9 @@ async def run_local_cmd(cmd: str, timeout: int = 30) -> Tuple[str, str, int]:
                                                      stdout=asyncio.subprocess.PIPE,
                                                      stderr=asyncio.subprocess.PIPE)
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return (stdout.decode("utf-8", errors="replace"), stderr.decode("utf-8", errors="replace"), proc.returncode)
+        return (stdout.decode("utf-8", errors="replace"),
+                stderr.decode("utf-8", errors="replace"),
+                proc.returncode or 0)
     except asyncio.TimeoutError:
         return ("", f"Command timed out after {timeout}s", 124)
     except Exception as e:
@@ -130,7 +125,9 @@ async def run_ssh_cmd(node: ClusterNode, cmd: str, user: str, timeout: int = 30)
                                                     stdout=asyncio.subprocess.PIPE,
                                                     stderr=asyncio.subprocess.PIPE)
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return (stdout.decode("utf-8", errors="replace"), stderr.decode("utf-8", errors="replace"), proc.returncode)
+        return (stdout.decode("utf-8", errors="replace"),
+                stderr.decode("utf-8", errors="replace"),
+                proc.returncode or 0)
     except asyncio.TimeoutError:
         return ("", f"SSH command timed out after {timeout}s", 124)
     except Exception as e:
@@ -367,7 +364,7 @@ async def cluster_gpu_status(config: ClusterGPUStatusConfig, builder: Builder):
                             try:
                                 temp = float(parts[2].strip())
                                 temps.append(temp)
-                            except:
+                            except ValueError:
                                 pass
                     if temps:
                         temp_info = f" (temps: {[f'{t:.0f}°C' for t in temps]})"
@@ -780,9 +777,83 @@ async def cluster_deploy_monitoring(config: ClusterDeployMonitoringConfig, build
             summary_lines.append("")
             summary_lines.append(f"🚀 Monitoring active on {total_monitoring}/{len(target_nodes)} nodes")
             summary_lines.append("💡 Metrics available at: http://<NODE_IP>:9400/metrics")
-            summary_lines.append("📊 Configure Prometheus to scrape all node:9400 endpoints")
+
+            # Auto-deploy centralized Prometheus/Grafana if requested
+            if opts.get("setup_central", "true").lower() in ("true", "1", "yes"):
+                summary_lines.append("")
+                summary_lines.append("🎯 Setting up centralized monitoring stack...")
+
+                # Build Prometheus config for all active nodes
+                active_targets = []
+                for node_ip, result in results.items():
+                    if "deployed successfully" in result["stdout"] or "already running" in result["stdout"]:
+                        active_targets.append(f"{node_ip}:9400")
+
+                prom_config = f"""global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: 'cluster-dcgm'
+    static_configs:
+      - targets: {json.dumps(active_targets)}
+        labels:
+          cluster: 'gb300'
+"""
+
+                # Deploy central monitoring stack
+                central_commands = [
+                    "mkdir -p /tmp/cluster_prom",
+                    f"cat > /tmp/cluster_prom/prometheus.yml << 'EOF'\n{prom_config}EOF",
+                ]
+
+                if force:
+                    central_commands.extend(["docker rm -f cluster-prometheus cluster-grafana 2>/dev/null || true"])
+
+                central_commands.extend([
+                    "docker run -d --restart unless-stopped --name cluster-prometheus --net=host "
+                    "-v /tmp/cluster_prom:/etc/prometheus prom/prometheus:latest "
+                    "--config.file=/etc/prometheus/prometheus.yml "
+                    "--storage.tsdb.retention.time=15d",
+                    "mkdir -p /tmp/cluster_grafana",
+                    "docker run -d --restart unless-stopped --name cluster-grafana --net=host "
+                    "-e GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin} "
+                    "-v /tmp/cluster_grafana:/var/lib/grafana "
+                    "grafana/grafana-oss:latest"
+                ])
+
+                # Execute central setup
+                try:
+                    for cmd in central_commands:
+                        stdout_c, stderr_c, returncode_c = await run_local_cmd(cmd, config.ssh_timeout)
+                        if returncode_c != 0 and "already" not in stderr_c.lower():
+                            summary_lines.append(f"⚠️ Central setup warning: {stderr_c.strip()}")
+
+                    # Test central services
+                    await asyncio.sleep(10)  # Give services time to start
+
+                    test_commands = [("Prometheus",
+                                      "curl -s -o /dev/null -w '%{http_code}' http://localhost:9090/-/ready"),
+                                     ("Grafana",
+                                      "curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/health")]
+
+                    for service_name, test_cmd in test_commands:
+                        stdout_t, stderr_t, returncode_t = await run_local_cmd(test_cmd, 10)
+                        status = stdout_t.strip() if stdout_t else "000"
+                        if status == "200":
+                            summary_lines.append(f"   ✅ {service_name}: Ready")
+                        else:
+                            summary_lines.append(f"   ⚠️ {service_name}: Starting (status: {status})")
+
+                    summary_lines.append("")
+                    summary_lines.append("📊 Centralized monitoring ready:")
+                    summary_lines.append(f"   🔍 Prometheus: http://{config.cluster_host}:9090")
+                    summary_lines.append(f"   📈 Grafana: http://{config.cluster_host}:3000 (admin/admin)")
+                    summary_lines.append(f"   🎯 Monitoring {len(active_targets)} GPU nodes")
+
+                except Exception as e:
+                    summary_lines.append(f"❌ Central monitoring setup failed: {str(e)}")
 
         if failed_count > 0:
+            summary_lines.append("")
             summary_lines.append("⚠️ Check failed nodes for Docker/GPU access issues")
 
         return sanitize("\n".join(summary_lines))
@@ -801,35 +872,86 @@ class ClusterCreateDashboardConfig(FunctionBaseConfig, name="cluster_create_dash
 async def cluster_create_dashboard(config: ClusterCreateDashboardConfig, builder: Builder):
 
     async def _cluster_create_dashboard(text: str) -> str:
-        """Create cluster-wide Grafana dashboard"""
+        """Create and deploy cluster-wide Grafana dashboard"""
         opts = parse_kv(text)
-        name = opts.get("name", "Cluster GPU Overview")
+        name = opts.get("name", "GB300 Cluster GPU Overview")
         refresh = opts.get("refresh", "30s")
+        overwrite = opts.get("overwrite", "true").lower() in ("1", "true", "yes", "y")
+        grafana_host = opts.get("grafana_host", config.cluster_host)
+        grafana_port = opts.get("grafana_port", "3000")
 
-        # Import Grafana helpers from the original module
+        grafana_url = f"http://{grafana_host}:{grafana_port}"
+
         try:
-            # Get list of cluster nodes for dashboard targets
-            all_nodes = await discover_cluster_nodes(config.cluster_host, config.cluster_user)
+            # Test Grafana connectivity first
+            test_cmd = f"curl -s -o /dev/null -w '%{{http_code}}' {grafana_url}/api/health"
+            stdout, stderr, returncode = await run_local_cmd(test_cmd, 10)
+            if stdout.strip() != "200":
+                return f"❌ Grafana not accessible at {grafana_url} (status: {stdout.strip()}). Run cluster_deploy_monitoring first."
 
+            # Get cluster nodes for context
+            all_nodes = await discover_cluster_nodes(config.cluster_host, config.cluster_user)
             if not all_nodes:
                 return "❌ No cluster nodes discovered for dashboard creation"
 
-            # Build Prometheus targets list
-            targets = [f"{node.ip}:9400" for node in all_nodes]
+            # Create Grafana API helper
+            import time
 
-            # Create multi-node Prometheus configuration
-            prom_config = {
-                "global": {
-                    "scrape_interval": "15s"
-                },
-                "scrape_configs": [{
-                    "job_name": "cluster-dcgm", "static_configs": [{
-                        "targets": targets
-                    }]
-                }]
-            }
+            import requests
 
-            dashboard_json = {
+            def grafana_api(path: str, method: str = "GET", payload: Optional[dict] = None):
+                headers = {"Content-Type": "application/json"}
+
+                # Enhanced auth - support both environment password and default
+                admin_password = getenv("GRAFANA_ADMIN_PASSWORD", "NewStrongPass!")
+                auth = ("admin", admin_password)
+
+                # Also support token-based auth if available
+                token = getenv("GF_TOKEN")
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                    auth = None
+
+                last_err = Exception("Grafana API request failed after retries")
+                for attempt in range(12):  # Up to 60s retry
+                    try:
+                        resp = requests.request(method,
+                                                f"{grafana_url}{path}",
+                                                headers=headers,
+                                                auth=auth,
+                                                json=payload,
+                                                timeout=10)
+                        resp.raise_for_status()
+                        return resp.json() if resp.text else {}
+                    except Exception as e:
+                        last_err = e
+                        if attempt == 11:
+                            raise last_err
+                        time.sleep(5)
+                return {}
+
+            # Ensure Prometheus datasource
+            ds_name = "ClusterPrometheus"
+            try:
+                datasource = grafana_api(f"/api/datasources/name/{ds_name}")
+            except Exception:
+                # Create datasource
+                ds_payload = {
+                    "name": ds_name,
+                    "type": "prometheus",
+                    "access": "proxy",
+                    "url": f"http://{grafana_host}:9090",
+                    "isDefault": True,
+                    "basicAuth": False,
+                }
+                datasource = grafana_api("/api/datasources", "POST", ds_payload)
+
+            ds_uid = datasource.get("uid")
+            if not ds_uid:
+                return "❌ Failed to create/get Prometheus datasource in Grafana"
+
+            # Create comprehensive cluster dashboard
+            dashboard = {
                 "title": name,
                 "timezone": "browser",
                 "refresh": refresh,
@@ -840,13 +962,20 @@ async def cluster_create_dashboard(config: ClusterCreateDashboardConfig, builder
                         "h": 4, "w": 6, "x": 0, "y": 0
                     },
                     "targets": [{
-                        "refId": "A", "expr": "count(DCGM_FI_DEV_GPU_TEMP)", "legendFormat": "GPUs"
+                        "refId": "A",
+                        "expr": "count(DCGM_FI_DEV_GPU_TEMP)",
+                        "legendFormat": "Total GPUs",
+                        "datasource": {
+                            "type": "prometheus", "uid": ds_uid
+                        },
                     }],
                     "fieldConfig": {
                         "defaults": {
                             "color": {
-                                "mode": "thresholds"
-                            }
+                                "mode": "palette-classic"
+                            }, "custom": {
+                                "displayMode": "basic"
+                            }, "unit": "short"
                         }
                     }
                 },
@@ -861,26 +990,81 @@ async def cluster_create_dashboard(config: ClusterCreateDashboardConfig, builder
                                "targets": [{
                                    "refId": "A",
                                    "expr": "count(count by (instance) (DCGM_FI_DEV_GPU_TEMP))",
-                                   "legendFormat": "Nodes"
-                               }]
+                                   "legendFormat": "Active Nodes",
+                                   "datasource": {
+                                       "type": "prometheus", "uid": ds_uid
+                                   },
+                               }],
                            },
                            {
-                               "type": "timeseries",
-                               "title": "GPU Temperatures by Node",
+                               "type": "stat",
+                               "title": "Avg Temperature",
                                "gridPos": {
-                                   "h": 8, "w": 24, "x": 0, "y": 4
+                                   "h": 4, "w": 6, "x": 12, "y": 0
                                },
                                "targets": [{
                                    "refId": "A",
-                                   "expr": "DCGM_FI_DEV_GPU_TEMP",
-                                   "legendFormat": "{{instance}} GPU{{gpu}}"
+                                   "expr": "avg(DCGM_FI_DEV_GPU_TEMP)",
+                                   "legendFormat": "Avg Temp",
+                                   "datasource": {
+                                       "type": "prometheus", "uid": ds_uid
+                                   },
                                }],
                                "fieldConfig": {
                                    "defaults": {
                                        "unit": "celsius",
                                        "thresholds": {
                                            "steps": [{
-                                               "color": "green", "value": None
+                                               "color": "green", "value": 0
+                                           }, {
+                                               "color": "yellow", "value": 70
+                                           }, {
+                                               "color": "red", "value": 85
+                                           }]
+                                       }
+                                   }
+                               }
+                           },
+                           {
+                               "type": "stat",
+                               "title": "Total Power",
+                               "gridPos": {
+                                   "h": 4, "w": 6, "x": 18, "y": 0
+                               },
+                               "targets": [{
+                                   "refId": "A",
+                                   "expr": "sum(DCGM_FI_DEV_POWER_USAGE)",
+                                   "legendFormat": "Total Power",
+                                   "datasource": {
+                                       "type": "prometheus", "uid": ds_uid
+                                   },
+                               }],
+                               "fieldConfig": {
+                                   "defaults": {
+                                       "unit": "watt"
+                                   }
+                               }
+                           },
+                           {
+                               "type": "timeseries",
+                               "title": "GPU Temperature by Node",
+                               "gridPos": {
+                                   "h": 8, "w": 12, "x": 0, "y": 4
+                               },
+                               "targets": [{
+                                   "refId": "A",
+                                   "expr": "DCGM_FI_DEV_GPU_TEMP",
+                                   "legendFormat": "{{instance}} GPU{{gpu}}",
+                                   "datasource": {
+                                       "type": "prometheus", "uid": ds_uid
+                                   },
+                               }],
+                               "fieldConfig": {
+                                   "defaults": {
+                                       "unit": "celsius",
+                                       "thresholds": {
+                                           "steps": [{
+                                               "color": "green", "value": 0
                                            }, {
                                                "color": "yellow", "value": 70
                                            }, {
@@ -894,16 +1078,59 @@ async def cluster_create_dashboard(config: ClusterCreateDashboardConfig, builder
                                "type": "timeseries",
                                "title": "GPU Utilization by Node",
                                "gridPos": {
-                                   "h": 8, "w": 24, "x": 0, "y": 12
+                                   "h": 8, "w": 12, "x": 12, "y": 4
                                },
                                "targets": [{
                                    "refId": "A",
                                    "expr": "DCGM_FI_DEV_GPU_UTIL",
-                                   "legendFormat": "{{instance}} GPU{{gpu}}"
+                                   "legendFormat": "{{instance}} GPU{{gpu}}",
+                                   "datasource": {
+                                       "type": "prometheus", "uid": ds_uid
+                                   },
                                }],
                                "fieldConfig": {
                                    "defaults": {
-                                       "unit": "percent", "max": 100
+                                       "unit": "percent", "min": 0, "max": 100
+                                   }
+                               }
+                           },
+                           {
+                               "type": "timeseries",
+                               "title": "Power Draw by Node",
+                               "gridPos": {
+                                   "h": 8, "w": 12, "x": 0, "y": 12
+                               },
+                               "targets": [{
+                                   "refId": "A",
+                                   "expr": "DCGM_FI_DEV_POWER_USAGE",
+                                   "legendFormat": "{{instance}} GPU{{gpu}}",
+                                   "datasource": {
+                                       "type": "prometheus", "uid": ds_uid
+                                   },
+                               }],
+                               "fieldConfig": {
+                                   "defaults": {
+                                       "unit": "watt"
+                                   }
+                               }
+                           },
+                           {
+                               "type": "timeseries",
+                               "title": "Memory Utilization by Node",
+                               "gridPos": {
+                                   "h": 8, "w": 12, "x": 12, "y": 12
+                               },
+                               "targets": [{
+                                   "refId": "A",
+                                   "expr": "DCGM_FI_DEV_MEM_COPY_UTIL",
+                                   "legendFormat": "{{instance}} GPU{{gpu}}",
+                                   "datasource": {
+                                       "type": "prometheus", "uid": ds_uid
+                                   },
+                               }],
+                               "fieldConfig": {
+                                   "defaults": {
+                                       "unit": "percent", "min": 0, "max": 100
                                    }
                                }
                            }],
@@ -912,25 +1139,43 @@ async def cluster_create_dashboard(config: ClusterCreateDashboardConfig, builder
                 },
                 "time": {
                     "from": "now-1h", "to": "now"
-                }
+                },
             }
 
+            # Deploy dashboard to Grafana
+            dash_payload = {"dashboard": dashboard, "overwrite": overwrite}
+            dash_response = grafana_api("/api/dashboards/db", "POST", dash_payload)
+
+            # Build dashboard URL like the working single-node version
+            url_path = dash_response.get("url") or f"/d/{dash_response.get('uid', '')}"
+            dashboard_url = f"{grafana_url}{url_path}"
+
+            # SSH tunnel setup for remote access
+            local_port = opts.get("local_port", "3001")
+            tunnel_cmd = f"ssh -fN -o ExitOnForwardFailure=yes -L {local_port}:localhost:{grafana_port} {config.cluster_user}@{grafana_host}"
+            local_url = f"http://localhost:{local_port}{url_path}"
+
             summary_lines = [
-                f"📊 Created cluster dashboard: {name}",
-                f"🎯 Monitoring {len(all_nodes)} nodes ({len(targets)} targets)",
+                f"✅ Cluster dashboard '{name}' created successfully!",
                 "",
-                "📋 Dashboard includes:",
-                "   • Total GPU count across cluster",
-                "   • Active node count",
-                "   • GPU temperatures by node",
-                "   • GPU utilization by node",
+                f"📊 Dashboard URL: {dashboard_url}",
+                f"👤 Login: admin/{getenv('GRAFANA_ADMIN_PASSWORD', 'admin')}",
+                f"🔄 Refresh: {refresh}",
                 "",
-                "🔧 Prometheus configuration needed:",
-                f"   job_name: cluster-dcgm",
-                f"   targets: {targets[:3]}..." if len(targets) > 3 else f"   targets: {targets}",
+                f"🎯 Monitoring Overview:",
+                f"   • {len(all_nodes)} cluster nodes",
+                f"   • {len([n for n in all_nodes if 'gb300' in n.hostname])} GB300 compute nodes",
+                f"   • ~{len(all_nodes) * 4} total GPUs (4 per GB300 node)",
                 "",
-                f"🌐 Dashboard JSON created for import into Grafana",
-                f"📊 Refresh interval: {refresh}"
+                f"🔗 Remote Access (from your laptop):",
+                f"   1. Run: {tunnel_cmd}",
+                f"   2. Open: {local_url}",
+                "",
+                f"📈 Dashboard shows:",
+                f"   • Real-time GPU temperatures across all nodes",
+                f"   • GPU utilization and power consumption",
+                f"   • Cluster summary statistics",
+                f"   • Per-node GPU performance metrics"
             ]
 
             return sanitize("\n".join(summary_lines))
