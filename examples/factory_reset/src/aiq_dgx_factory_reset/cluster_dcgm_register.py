@@ -866,19 +866,22 @@ scrape_configs:
 class ClusterCreateDashboardConfig(FunctionBaseConfig, name="cluster_create_dashboard"):
     cluster_host: str = Field(default=DEFAULT_CLUSTER_HOST, description="Cluster head hostname/IP")
     cluster_user: str = Field(default=DEFAULT_CLUSTER_USER, description="SSH username for cluster access")
+    name: str = Field(default="GB300 Cluster GPU Overview", description="Dashboard name")
+    refresh: str = Field(default="30s", description="Dashboard refresh interval")
+    grafana_host: str = Field(default=DEFAULT_CLUSTER_HOST, description="Grafana host IP/hostname")
+    grafana_port: str = Field(default="3000", description="Grafana port")
+    overwrite: bool = Field(default=True, description="Overwrite existing dashboard")
 
 
 @register_function(config_type=ClusterCreateDashboardConfig)
 async def cluster_create_dashboard(config: ClusterCreateDashboardConfig, builder: Builder):
 
-    async def _cluster_create_dashboard(text: str) -> str:
+    async def _cluster_create_dashboard(name: str = config.name,
+                                        refresh: str = config.refresh,
+                                        grafana_host: str = config.grafana_host,
+                                        grafana_port: str = config.grafana_port,
+                                        overwrite: bool = config.overwrite) -> str:
         """Create and deploy cluster-wide Grafana dashboard"""
-        opts = parse_kv(text)
-        name = opts.get("name", "GB300 Cluster GPU Overview")
-        refresh = opts.get("refresh", "30s")
-        overwrite = opts.get("overwrite", "true").lower() in ("1", "true", "yes", "y")
-        grafana_host = opts.get("grafana_host", config.cluster_host)
-        grafana_port = opts.get("grafana_port", "3000")
 
         grafana_url = f"http://{grafana_host}:{grafana_port}"
 
@@ -1151,7 +1154,7 @@ async def cluster_create_dashboard(config: ClusterCreateDashboardConfig, builder
             dashboard_url = f"{grafana_url}{url_path}"
 
             # SSH tunnel setup for remote access
-            local_port = opts.get("local_port", "3001")
+            local_port = "3001"  # Default port for SSH tunnel
             tunnel_cmd = f"ssh -fN -o ExitOnForwardFailure=yes -L {local_port}:localhost:{grafana_port} {config.cluster_user}@{grafana_host}"
             local_url = f"http://localhost:{local_port}{url_path}"
 
@@ -1159,7 +1162,7 @@ async def cluster_create_dashboard(config: ClusterCreateDashboardConfig, builder
                 f"✅ Cluster dashboard '{name}' created successfully!",
                 "",
                 f"📊 Dashboard URL: {dashboard_url}",
-                f"👤 Login: admin/{getenv('GRAFANA_ADMIN_PASSWORD', 'admin')}",
+                f"👤 Login: admin/{getenv('GRAFANA_ADMIN_PASSWORD', 'NewStrongPass!')}",
                 f"🔄 Refresh: {refresh}",
                 "",
                 f"🎯 Monitoring Overview:",
@@ -1185,7 +1188,7 @@ async def cluster_create_dashboard(config: ClusterCreateDashboardConfig, builder
 
     yield FunctionInfo.from_fn(
         _cluster_create_dashboard,
-        description="Create cluster-wide Grafana dashboard. Optional: name=DashboardName, refresh=30s")
+        description="Create cluster-wide Grafana dashboard with specified name, refresh interval, and Grafana host")
 
 
 print("✅ Cluster DCGM tools registered successfully")
