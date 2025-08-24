@@ -843,7 +843,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     app = graph.compile()
 
     async def _run(input_text: str) -> str:  # noqa: ARG001 - required by framework signature
-        logger.info("🚀 DGX Orchestrator: Starting workflow with input: %s", input_text[:100])
+        logger.info("DGX Orchestrator: Starting workflow with input: %s", input_text[:100])
         state: OrchestratorState = {
             "input": input_text,
             "assessment": "",
