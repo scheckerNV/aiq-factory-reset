@@ -279,16 +279,15 @@ class ClusterGPUStatusConfig(FunctionBaseConfig, name="cluster_gpu_status"):
     cluster_host: str = Field(default=DEFAULT_CLUSTER_HOST, description="Cluster head hostname/IP")
     cluster_user: str = Field(default=DEFAULT_CLUSTER_USER, description="SSH username for cluster access")
     ssh_timeout: int = Field(default=DEFAULT_SSH_TIMEOUT, description="SSH timeout in seconds")
+    nodes: str = Field(default="all", description="Node selector (all, IP list, hostname list, ranges)")
+    output: str = Field(default="text", description="Output format: text or json")
 
 
 @register_function(config_type=ClusterGPUStatusConfig)
 async def cluster_gpu_status(config: ClusterGPUStatusConfig, builder: Builder):
 
-    async def _cluster_gpu_status(text: str) -> str:
+    async def _cluster_gpu_status(nodes: str = "all", output: str = "text") -> str:
         """Get GPU status across cluster nodes"""
-        opts = parse_kv(text)
-        node_spec = opts.get("nodes", "all")
-        output = opts.get("output", "text")
 
         # Discover cluster nodes
         all_nodes = await discover_cluster_nodes(config.cluster_host, config.cluster_user)
@@ -296,9 +295,9 @@ async def cluster_gpu_status(config: ClusterGPUStatusConfig, builder: Builder):
             return "❌ No cluster nodes discovered. Check BCM connectivity and node configuration."
 
         # Parse target nodes
-        target_nodes = parse_node_spec(node_spec, all_nodes)
+        target_nodes = parse_node_spec(nodes, all_nodes)
         if not target_nodes:
-            return f"❌ No nodes matched specification: {node_spec}"
+            return f"❌ No nodes matched specification: {nodes}"
 
         logger.info("Checking GPU status on %d nodes: %s", len(target_nodes), [n.hostname for n in target_nodes])
 
@@ -383,24 +382,22 @@ async def cluster_gpu_status(config: ClusterGPUStatusConfig, builder: Builder):
 
     yield FunctionInfo.from_fn(
         _cluster_gpu_status,
-        description=
-        "Check GPU status across cluster compute nodes. Optional: nodes=all|IP1,IP2|IP1-5|hostname1,hostname2")
+        description="Check GPU status across cluster compute nodes with specified node selector and output format")
 
 
 class ClusterGPUEnableHealthConfig(FunctionBaseConfig, name="cluster_gpu_enable_health"):
     cluster_host: str = Field(default=DEFAULT_CLUSTER_HOST, description="Cluster head hostname/IP")
     cluster_user: str = Field(default=DEFAULT_CLUSTER_USER, description="SSH username for cluster access")
     ssh_timeout: int = Field(default=DEFAULT_SSH_TIMEOUT, description="SSH timeout in seconds")
+    nodes: str = Field(default="all", description="Node selector (all, IP list, hostname list, ranges)")
+    systems: str = Field(default="all", description="Health monitoring systems: all|pcie|memory|thermal|nvlink")
 
 
 @register_function(config_type=ClusterGPUEnableHealthConfig)
 async def cluster_gpu_enable_health(config: ClusterGPUEnableHealthConfig, builder: Builder):
 
-    async def _cluster_gpu_enable_health(text: str) -> str:
+    async def _cluster_gpu_enable_health(nodes: str = "all", systems: str = "all") -> str:
         """Enable DCGM health monitoring across cluster nodes"""
-        opts = parse_kv(text)
-        node_spec = opts.get("nodes", "all")
-        systems = opts.get("systems", "all")
 
         # Map system names to DCGM flags
         system_map = {
@@ -410,10 +407,10 @@ async def cluster_gpu_enable_health(config: ClusterGPUEnableHealthConfig, builde
 
         # Discover and parse nodes
         all_nodes = await discover_cluster_nodes(config.cluster_host, config.cluster_user)
-        target_nodes = parse_node_spec(node_spec, all_nodes)
+        target_nodes = parse_node_spec(nodes, all_nodes)
 
         if not target_nodes:
-            return f"❌ No nodes matched specification: {node_spec}"
+            return f"❌ No nodes matched specification: {nodes}"
 
         logger.info("Enabling DCGM health on %d nodes with systems=%s", len(target_nodes), systems)
 
@@ -454,32 +451,29 @@ async def cluster_gpu_enable_health(config: ClusterGPUEnableHealthConfig, builde
 
     yield FunctionInfo.from_fn(
         _cluster_gpu_enable_health,
-        description=
-        "Enable DCGM health monitoring across cluster. Optional: nodes=all|spec, systems=all|pcie|memory|thermal|nvlink"
-    )
+        description="Enable DCGM health monitoring across cluster with specified node selector and monitoring systems")
 
 
 class ClusterGPUHealthCheckConfig(FunctionBaseConfig, name="cluster_gpu_health_check"):
     cluster_host: str = Field(default=DEFAULT_CLUSTER_HOST, description="Cluster head hostname/IP")
     cluster_user: str = Field(default=DEFAULT_CLUSTER_USER, description="SSH username for cluster access")
     ssh_timeout: int = Field(default=DEFAULT_SSH_TIMEOUT, description="SSH timeout in seconds")
+    nodes: str = Field(default="all", description="Node selector (all, IP list, hostname list, ranges)")
+    output: str = Field(default="text", description="Output format: text or json")
 
 
 @register_function(config_type=ClusterGPUHealthCheckConfig)
 async def cluster_gpu_health_check(config: ClusterGPUHealthCheckConfig, builder: Builder):
 
-    async def _cluster_gpu_health_check(text: str) -> str:
+    async def _cluster_gpu_health_check(nodes: str = "all", output: str = "text") -> str:
         """Check DCGM health status across cluster nodes"""
-        opts = parse_kv(text)
-        node_spec = opts.get("nodes", "all")
-        output = opts.get("output", "text")
 
         # Discover and parse nodes
         all_nodes = await discover_cluster_nodes(config.cluster_host, config.cluster_user)
-        target_nodes = parse_node_spec(node_spec, all_nodes)
+        target_nodes = parse_node_spec(nodes, all_nodes)
 
         if not target_nodes:
-            return f"❌ No nodes matched specification: {node_spec}"
+            return f"❌ No nodes matched specification: {nodes}"
 
         logger.info("Checking DCGM health on %d nodes", len(target_nodes))
 
@@ -590,7 +584,7 @@ async def cluster_gpu_health_check(config: ClusterGPUHealthCheckConfig, builder:
 
     yield FunctionInfo.from_fn(
         _cluster_gpu_health_check,
-        description="Check DCGM health status across cluster nodes. Optional: nodes=all|spec, output=text|json")
+        description="Check DCGM health status across cluster nodes with specified node selector and output format")
 
 
 class ClusterGPUDiagnosticsConfig(FunctionBaseConfig, name="cluster_gpu_diagnostics"):
@@ -598,24 +592,24 @@ class ClusterGPUDiagnosticsConfig(FunctionBaseConfig, name="cluster_gpu_diagnost
     cluster_user: str = Field(default=DEFAULT_CLUSTER_USER, description="SSH username for cluster access")
     ssh_timeout: int = Field(default=DEFAULT_SSH_TIMEOUT, description="SSH timeout in seconds")
     dcgm_timeout: int = Field(default=DEFAULT_DCGM_TIMEOUT, description="DCGM diagnostics timeout in seconds")
+    nodes: str = Field(default="all", description="Node selector (all, IP list, hostname list, ranges)")
+    level: str = Field(default="r2", description="Diagnostic level: r1|r2|r3|r4|nvbandwidth")
+    output: str = Field(default="text", description="Output format: text or json")
 
 
 @register_function(config_type=ClusterGPUDiagnosticsConfig)
 async def cluster_gpu_diagnostics(config: ClusterGPUDiagnosticsConfig, builder: Builder):
 
-    async def _cluster_gpu_diagnostics(text: str) -> str:
+    async def _cluster_gpu_diagnostics(nodes: str = "all", level: str = "r2", output: str = "text") -> str:
         """Run DCGM diagnostics across cluster nodes"""
-        opts = parse_kv(text)
-        node_spec = opts.get("nodes", "all")
-        level = opts.get("level", "r2").lower()
-        output = opts.get("output", "text")
+        level = level.lower()  # Ensure lowercase for comparison
 
         # Discover and parse nodes
         all_nodes = await discover_cluster_nodes(config.cluster_host, config.cluster_user)
-        target_nodes = parse_node_spec(node_spec, all_nodes)
+        target_nodes = parse_node_spec(nodes, all_nodes)
 
         if not target_nodes:
-            return f"❌ No nodes matched specification: {node_spec}"
+            return f"❌ No nodes matched specification: {nodes}"
 
         logger.info("Running DCGM diagnostics level %s on %d nodes", level, len(target_nodes))
 
@@ -695,31 +689,30 @@ async def cluster_gpu_diagnostics(config: ClusterGPUDiagnosticsConfig, builder: 
     yield FunctionInfo.from_fn(
         _cluster_gpu_diagnostics,
         description=
-        "Run DCGM diagnostics across cluster. Optional: nodes=all|spec, level=r1|r2|r3|r4|nvbandwidth, output=text|json"
-    )
+        "Run DCGM diagnostics across cluster with specified node selector, diagnostic level, and output format")
 
 
 class ClusterDeployMonitoringConfig(FunctionBaseConfig, name="cluster_deploy_monitoring"):
     cluster_host: str = Field(default=DEFAULT_CLUSTER_HOST, description="Cluster head hostname/IP")
     cluster_user: str = Field(default=DEFAULT_CLUSTER_USER, description="SSH username for cluster access")
     ssh_timeout: int = Field(default=DEFAULT_SSH_TIMEOUT, description="SSH timeout in seconds")
+    nodes: str = Field(default="all", description="Node selector (all, IP list, hostname list, ranges)")
+    force: bool = Field(default=False, description="Force restart existing containers")
+    setup_central: bool = Field(default=False, description="Deploy centralized Prometheus/Grafana monitoring stack")
 
 
 @register_function(config_type=ClusterDeployMonitoringConfig)
 async def cluster_deploy_monitoring(config: ClusterDeployMonitoringConfig, builder: Builder):
 
-    async def _cluster_deploy_monitoring(text: str) -> str:
+    async def _cluster_deploy_monitoring(nodes: str = "all", force: bool = False, setup_central: bool = False) -> str:
         """Deploy dcgm-exporter monitoring across cluster nodes"""
-        opts = parse_kv(text)
-        node_spec = opts.get("nodes", "all")
-        force = opts.get("force", "false").lower() in ("true", "1", "yes")
 
         # Discover and parse nodes
         all_nodes = await discover_cluster_nodes(config.cluster_host, config.cluster_user)
-        target_nodes = parse_node_spec(node_spec, all_nodes)
+        target_nodes = parse_node_spec(nodes, all_nodes)
 
         if not target_nodes:
-            return f"❌ No nodes matched specification: {node_spec}"
+            return f"❌ No nodes matched specification: {nodes}"
 
         logger.info("Deploying monitoring to %d nodes (force=%s)", len(target_nodes), force)
 
@@ -779,7 +772,7 @@ async def cluster_deploy_monitoring(config: ClusterDeployMonitoringConfig, build
             summary_lines.append("💡 Metrics available at: http://<NODE_IP>:9400/metrics")
 
             # Auto-deploy centralized Prometheus/Grafana if requested
-            if opts.get("setup_central", "true").lower() in ("true", "1", "yes"):
+            if setup_central:
                 summary_lines.append("")
                 summary_lines.append("🎯 Setting up centralized monitoring stack...")
 
@@ -860,7 +853,7 @@ scrape_configs:
 
     yield FunctionInfo.from_fn(
         _cluster_deploy_monitoring,
-        description="Deploy dcgm-exporter monitoring across cluster. Optional: nodes=all|spec, force=true|false")
+        description="Deploy dcgm-exporter monitoring across cluster with optional centralized Prometheus/Grafana stack")
 
 
 class ClusterCreateDashboardConfig(FunctionBaseConfig, name="cluster_create_dashboard"):
