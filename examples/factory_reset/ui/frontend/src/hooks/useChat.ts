@@ -25,7 +25,14 @@ export const useChat = () => {
     if (!sessionId) return;
 
     try {
-      const ws = new WebSocket(`ws://localhost:8000/ws/${sessionId}`);
+      // Use environment variables for backend connection, fallback to relative proxy
+      const wsBackendUrl = process.env.NEXT_PUBLIC_WS_BACKEND_URL;
+      const wsUrl = wsBackendUrl
+        ? `${wsBackendUrl}/ws/${sessionId}`
+        : `ws://${window.location.host}/ws/${sessionId}`;
+
+      console.log('Connecting WebSocket to:', wsUrl);
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {

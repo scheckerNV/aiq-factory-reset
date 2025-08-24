@@ -272,13 +272,24 @@ echo "✅ Using port $FRONTEND_PORT for frontend"
 # Now build the frontend with the correct backend port
 echo "🏗️  Building frontend..."
 echo "Frontend will connect to backend on port $BACKEND_PORT"
+
+# Set environment variables for frontend to connect to backend
+export NEXT_PUBLIC_BACKEND_URL="http://localhost:$BACKEND_PORT"
+export NEXT_PUBLIC_WS_BACKEND_URL="ws://localhost:$BACKEND_PORT"
+echo "WebSocket will connect to: $NEXT_PUBLIC_WS_BACKEND_URL"
+
 cd "$UI_DIR/frontend"
+NEXT_PUBLIC_BACKEND_URL="$NEXT_PUBLIC_BACKEND_URL" \
+NEXT_PUBLIC_WS_BACKEND_URL="$NEXT_PUBLIC_WS_BACKEND_URL" \
 BACKEND_PORT=$BACKEND_PORT npm run build
 
 # Start the frontend
 echo "🚀 Starting frontend server..."
 cd "$UI_DIR/frontend"
-HOST=0.0.0.0 PORT=$FRONTEND_PORT BACKEND_PORT=$BACKEND_PORT npm run start -- -p "$FRONTEND_PORT" -H 0.0.0.0 &
+HOST=0.0.0.0 PORT=$FRONTEND_PORT \
+NEXT_PUBLIC_BACKEND_URL="$NEXT_PUBLIC_BACKEND_URL" \
+NEXT_PUBLIC_WS_BACKEND_URL="$NEXT_PUBLIC_WS_BACKEND_URL" \
+BACKEND_PORT=$BACKEND_PORT npm run start -- -p "$FRONTEND_PORT" -H 0.0.0.0 &
 FRONTEND_PID=$!
 
 # Wait a moment for the frontend to start

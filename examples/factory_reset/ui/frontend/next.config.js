@@ -9,6 +9,10 @@ const nextConfig = {
       {
         source: '/api/:path*',
         destination: `http://localhost:${backendPort}/:path*`
+      },
+      {
+        source: '/ws/:path*',
+        destination: `http://localhost:${backendPort}/ws/:path*`
       }
     ]
   }
