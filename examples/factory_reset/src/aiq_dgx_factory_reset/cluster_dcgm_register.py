@@ -372,7 +372,7 @@ async def cluster_gpu_status(config: ClusterGPUStatusConfig, builder: Builder):
 
         # Overall summary
         summary_lines.append("=" * 50)
-        summary_lines.append(f"📊 Summary: {healthy_nodes}/{total_nodes} nodes healthy, {total_gpus} total GPUs")
+        summary_lines.append(f"Summary: {healthy_nodes}/{total_nodes} nodes healthy, {total_gpus} total GPUs")
 
         if healthy_nodes < total_nodes:
             failed_nodes = total_nodes - healthy_nodes
@@ -569,10 +569,10 @@ async def cluster_gpu_health_check(config: ClusterGPUHealthCheckConfig, builder:
 
         # Overall cluster summary
         summary_lines.append("=" * 50)
-        summary_lines.append(f"📊 Cluster Health: {total_gpus} total GPUs")
-        summary_lines.append(f"   🟢 Healthy: {healthy_gpus}")
-        summary_lines.append(f"   🟡 Warning: {warning_gpus}")
-        summary_lines.append(f"   🔴 Critical: {critical_gpus}")
+        summary_lines.append(f"Cluster Health: {total_gpus} total GPUs")
+        summary_lines.append(f"   Healthy: {healthy_gpus}")
+        summary_lines.append(f"   Warning: {warning_gpus}")
+        summary_lines.append(f"   Critical: {critical_gpus}")
 
         if nodes_with_issues:
             summary_lines.append(f"⚠️ Nodes needing attention: {', '.join(nodes_with_issues)}")
@@ -748,7 +748,7 @@ async def cluster_deploy_monitoring(config: ClusterDeployMonitoringConfig, build
                 summary_lines.append(f"✅ {hostname} ({node_ip}): dcgm-exporter deployed")
                 success_count += 1
             elif "already running" in stdout:
-                summary_lines.append(f"ℹ️ {hostname} ({node_ip}): dcgm-exporter already running")
+                summary_lines.append(f"{hostname} ({node_ip}): dcgm-exporter already running")
                 already_running += 1
             elif "Docker not available" in stdout:
                 summary_lines.append(f"⚠️ {hostname} ({node_ip}): Docker not available")
@@ -760,21 +760,21 @@ async def cluster_deploy_monitoring(config: ClusterDeployMonitoringConfig, build
 
         # Overall summary
         summary_lines.append("=" * 60)
-        summary_lines.append(f"📊 Deployment Results:")
-        summary_lines.append(f"   ✅ Newly deployed: {success_count}")
-        summary_lines.append(f"   ℹ️ Already running: {already_running}")
+        summary_lines.append(f"Deployment Results:")
+        summary_lines.append(f"   Newly deployed: {success_count}")
+        summary_lines.append(f"   Already running: {already_running}")
         summary_lines.append(f"   ❌ Failed: {failed_count}")
 
         total_monitoring = success_count + already_running
         if total_monitoring > 0:
             summary_lines.append("")
-            summary_lines.append(f"🚀 Monitoring active on {total_monitoring}/{len(target_nodes)} nodes")
-            summary_lines.append("💡 Metrics available at: http://<NODE_IP>:9400/metrics")
+            summary_lines.append(f"Monitoring active on {total_monitoring}/{len(target_nodes)} nodes")
+            summary_lines.append("Metrics available at: http://<NODE_IP>:9400/metrics")
 
             # Auto-deploy centralized Prometheus/Grafana if requested
             if setup_central:
                 summary_lines.append("")
-                summary_lines.append("🎯 Setting up centralized monitoring stack...")
+                summary_lines.append("Setting up centralized monitoring stack...")
 
                 # Build Prometheus config for all active nodes
                 active_targets = []
@@ -837,10 +837,10 @@ scrape_configs:
                             summary_lines.append(f"   ⚠️ {service_name}: Starting (status: {status})")
 
                     summary_lines.append("")
-                    summary_lines.append("📊 Centralized monitoring ready:")
-                    summary_lines.append(f"   🔍 Prometheus: http://{config.cluster_host}:9090")
-                    summary_lines.append(f"   📈 Grafana: http://{config.cluster_host}:3000 (admin/admin)")
-                    summary_lines.append(f"   🎯 Monitoring {len(active_targets)} GPU nodes")
+                    summary_lines.append("Centralized monitoring ready:")
+                    summary_lines.append(f"   Prometheus: http://{config.cluster_host}:9090")
+                    summary_lines.append(f"   Grafana: http://{config.cluster_host}:3000 (admin/admin)")
+                    summary_lines.append(f"   Monitoring {len(active_targets)} GPU nodes")
 
                 except Exception as e:
                     summary_lines.append(f"❌ Central monitoring setup failed: {str(e)}")
@@ -1154,20 +1154,20 @@ async def cluster_create_dashboard(config: ClusterCreateDashboardConfig, builder
             summary_lines = [
                 f"✅ Cluster dashboard '{name}' created successfully!",
                 "",
-                f"📊 Dashboard URL: {dashboard_url}",
-                f"👤 Login: admin/{getenv('GRAFANA_ADMIN_PASSWORD', 'NewStrongPass!')}",
-                f"🔄 Refresh: {refresh}",
+                f"Dashboard URL: {dashboard_url}",
+                f"Login: admin/{getenv('GRAFANA_ADMIN_PASSWORD', 'NewStrongPass!')}",
+                f"Refresh: {refresh}",
                 "",
-                f"🎯 Monitoring Overview:",
+                f"Monitoring Overview:",
                 f"   • {len(all_nodes)} cluster nodes",
                 f"   • {len([n for n in all_nodes if 'gb300' in n.hostname])} GB300 compute nodes",
                 f"   • ~{len(all_nodes) * 4} total GPUs (4 per GB300 node)",
                 "",
-                f"🔗 Remote Access (from your laptop):",
+                f"Remote Access (from your laptop):",
                 f"   1. Run: {tunnel_cmd}",
                 f"   2. Open: {local_url}",
                 "",
-                f"📈 Dashboard shows:",
+                f"Dashboard shows:",
                 f"   • Real-time GPU temperatures across all nodes",
                 f"   • GPU utilization and power consumption",
                 f"   • Cluster summary statistics",
