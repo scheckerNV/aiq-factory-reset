@@ -158,8 +158,8 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                     if not outdir and lines:
                         outdir = lines[-1].strip()
                     return (f"✅ Node assessment completed successfully!\n\n"
-                            f"📋 Assessment Output:\n{s_out.strip()}\n\n"
-                            f"📁 Results saved in: {outdir}\n"
+                            f"Assessment Output:\n{s_out.strip()}\n\n"
+                            f"Results saved in: {outdir}\n"
                             f"Use node_results_reader to analyze the detailed results.")
                 else:
                     s_err = stderr.decode("utf-8", errors="replace")
@@ -205,8 +205,8 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                     if not outdir and lines:
                         outdir = lines[-1].strip()
                     return (f"✅ Node assessment completed successfully!\n\n"
-                            f"📋 Assessment Output:\n{s_out.strip()}\n\n"
-                            f"📁 Results saved on cluster: {outdir}\n"
+                            f"Assessment Output:\n{s_out.strip()}\n\n"
+                            f"Results saved on cluster: {outdir}\n"
                             "Use the node_results_reader tool to analyze the results.")
                 else:
                     s_err = stderr.decode("utf-8", errors="replace")
@@ -319,7 +319,7 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
                     for f in latest_dir.glob(pat):
                         try:
                             content = await asyncio.to_thread(f.read_text)
-                            results.append(f"📄 {f.name}:\n{_truncate_text(content)}\n{'='*50}\n")
+                            results.append(f"{f.name}:\n{_truncate_text(content)}\n{'='*50}\n")
                         except Exception:
                             pass
                 return "\n".join(results) if results else "❌ No results found."
@@ -387,8 +387,8 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
                 if proc.returncode == 0:
                     content = stdout.decode("utf-8")
                     if content.strip():
-                        remote_results.append(f"📄 {file_pattern}:\n{_truncate_text(content)}\n{'='*50}\n")
-            return (f"📊 Node Assessment Results:\n\n{os.linesep.join(remote_results)}"
+                        remote_results.append(f"{file_pattern}:\n{_truncate_text(content)}\n{'='*50}\n")
+            return (f"Node Assessment Results:\n\n{os.linesep.join(remote_results)}"
                     if remote_results else "❌ No assessment results found. Run node_assessment_tool first.")
         except Exception as e:  # noqa: BLE001
             return f"❌ Error reading node assessment results: {str(e)}"
@@ -487,13 +487,13 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         results_dir: str
 
     async def assess_node(state: OrchestratorState):
-        logger.info("🔍 assess_node: Starting node assessment...")
+        logger.info("assess_node: Starting node assessment...")
         if not node_assess:
-            logger.warning("⚠️ assess_node: No node_assess tool available")
+            logger.warning("assess_node: No node_assess tool available")
             return state
 
         try:
-            logger.info("🚀 assess_node: Calling node_assess.ainvoke...")
+            logger.info("assess_node: Calling node_assess.ainvoke...")
             assess_out = await asyncio.wait_for(
                 node_assess.ainvoke("Run DGX node assessment and save results"),
                 timeout=state.get("timeout", None) or LOCAL_CMD_TIMEOUT,
@@ -501,19 +501,19 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             logger.info("✅ assess_node: Node assessment completed successfully")
         except asyncio.TimeoutError:
             assess_out = f"❌ Node assessment timed out after {state.get('timeout', None) or LOCAL_CMD_TIMEOUT}s"
-            logger.warning("⏰ assess_node: Node assessment timed out")
+            logger.warning("assess_node: Node assessment timed out")
         except Exception as e:  # noqa: BLE001
             assess_out = f"❌ Node assessment error: {str(e)}"
             logger.error("❌ assess_node: Node assessment failed: %s", str(e))
 
         # Extract results directory from assessment output
-        logger.info("📁 assess_node: Extracting results directory...")
+        logger.info("assess_node: Extracting results directory...")
         results_dir = ""
         if assess_out:
             m = re.search(r"(/tmp/node_assessment_[0-9_]+)", assess_out)
             if m:
                 results_dir = m.group(1)
-                logger.info("📁 assess_node: Found results directory: %s", results_dir)
+                logger.info("assess_node: Found results directory: %s", results_dir)
 
         # Get the appropriate results query (set in analyze_and_decide)
         results_query = state.get("results_query", "overview")  # default to overview for better detail
@@ -525,7 +525,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             results_query_with_dir = results_query
 
         # Read detailed results for LLM analysis (but don't dump in final output)
-        logger.info("📖 assess_node: Reading assessment results with query: %s", results_query_with_dir)
+        logger.info("assess_node: Reading assessment results with query: %s", results_query_with_dir)
         results_text = ""
         if node_reader:
             try:
@@ -535,15 +535,15 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                 results_text = _strip_ansi(raw_results)
                 logger.info("✅ assess_node: Results read successfully")
             except Exception as e:
-                logger.warning("⚠️ assess_node: Failed to read results: %s", str(e))
+                logger.warning("assess_node: Failed to read results: %s", str(e))
                 results_text = ""
         else:
-            logger.warning("⚠️ assess_node: No node_reader tool available")
+            logger.warning("assess_node: No node_reader tool available")
 
         # Keep analysis clean (no raw file dumps)
         analysis = state.get("analysis", "") or ""
 
-        logger.info("🏁 assess_node: Completed, returning state")
+        logger.info("assess_node: Completed, returning state")
         return {
             **state,
             "assessment": assess_out,
@@ -559,7 +559,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         - Pass 2: conditional RAG enrichment (only if action indicates commands/reset).
         Adds deterministic keyword overrides to ensure reset requests are labeled correctly.
         """
-        logger.info("🧠 analyze_and_decide: Starting analysis...")
+        logger.info("analyze_and_decide: Starting analysis...")
         import json as _json
 
         # Skip reader call in analyze_and_decide to avoid duplicates
@@ -671,7 +671,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
     async def summarize_results(state: OrchestratorState):
         """Use LLM to analyze assessment results and produce concise summary"""
-        logger.info("📝 summarize_results: Starting intelligent summarization...")
+        logger.info("summarize_results: Starting intelligent summarization...")
 
         try:
             reasoning_llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
@@ -684,7 +684,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         question = state.get("input", "")
 
         if not results.strip():
-            logger.warning("⚠️ summarize_results: No results text to summarize")
+            logger.warning("summarize_results: No results text to summarize")
             return {**state, "analysis": "❌ No assessment results available for summarization"}
 
         # Use LLM to create intelligent summary
@@ -696,7 +696,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                                              timeout=LLM_STEP_TIMEOUT)
             logger.info("✅ summarize_results: LLM summarization completed")
         except asyncio.TimeoutError:
-            logger.warning("⏰ summarize_results: LLM summarization timed out")
+            logger.warning("summarize_results: LLM summarization timed out")
             summary = f"❌ Summary unavailable (LLM timed out after {LLM_STEP_TIMEOUT}s)"
         except Exception as e:
             logger.error("❌ summarize_results: LLM error: %s", str(e))
@@ -755,7 +755,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
     async def execute_commands(state: OrchestratorState):
         if not executor:
-            return {**state, "execution_result": "ℹ️ No executor configured; skipping execution."}
+            return {**state, "execution_result": "No executor configured; skipping execution."}
         cmds = state.get("bcm_commands", "")
         if not cmds.strip() or not all(line.strip().startswith('cmsh -c "') for line in cmds.splitlines()):
             return {**state, "execution_result": "❌ No executable cmsh commands. Skipping execution."}
@@ -771,7 +771,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         return {**state, "execution_result": exec_out}
 
     async def synthesize(state: OrchestratorState):
-        final = ("# 🧭 DGX Orchestration\n\n"
+        final = ("# DGX Orchestration\n\n"
                  "## Reasoning and Decision\n" + (state.get("analysis", "") or "") + "\n\n"
                  "## ReAct Agent Plan and Steps\n" + (state.get("react_agent_output", "") or "") + "\n\n"
                  "## Generated BCM Commands\n" + (state.get("bcm_commands", "") or "") + "\n\n"
@@ -780,14 +780,14 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
     async def synthesize_diagnostics_only(state: OrchestratorState):
         """Synthesize results for diagnostics-only requests (no command generation/execution)"""
-        logger.info("📝 synthesize_diagnostics_only: Starting synthesis...")
+        logger.info("synthesize_diagnostics_only: Starting synthesis...")
 
         # Get the LLM-generated summary from the analysis
         llm_summary = state.get("analysis", "") or ""
         results_dir = state.get("results_dir", "N/A")
 
         # Build clean output with just the intelligent summary
-        final = ("# 🧭 DGX Orchestration (Diagnostics Only)\n\n"
+        final = ("# DGX Orchestration (Diagnostics Only)\n\n"
                  "## Assessment Summary\n" + llm_summary + "\n\n"
                  "## Notes\n"
                  f"Results directory: {results_dir}\n"
@@ -800,15 +800,15 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     def route_after_analysis(state: OrchestratorState):
         # Always assess first, branch afterwards
         action_type = state.get("action_type", "diagnostics_only")
-        logger.info("🔀 route_after_analysis: %s -> assess", action_type)
+        logger.info("route_after_analysis: %s -> assess", action_type)
         return "assess"
 
     def route_after_assess(state: OrchestratorState):
         action_type = state.get("action_type", "diagnostics_only")
         if action_type in ("generate_bcm_commands", "reset_nodes"):
-            logger.info("🔀 route_after_assess: %s -> generate", action_type)
+            logger.info("route_after_assess: %s -> generate", action_type)
             return "generate"
-        logger.info("🔀 route_after_assess: %s -> summarize", action_type)
+        logger.info("route_after_assess: %s -> summarize", action_type)
         return "summarize"
 
     # No post-agent routing in minimal orchestrator
@@ -854,9 +854,9 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             "execution_result": "",
             "final_output": "",
         }
-        logger.info("📊 DGX Orchestrator: Invoking LangGraph app...")
+        logger.info("DGX Orchestrator: Invoking LangGraph app...")
         result = await app.ainvoke(state)
-        logger.info("🏁 DGX Orchestrator: Workflow completed")
+        logger.info("DGX Orchestrator: Workflow completed")
         return result.get("final_output", "❌ DGX orchestrator produced no output")
 
     yield FunctionInfo.from_fn(
