@@ -4,12 +4,11 @@ const nextConfig = {
   swcMinify: true,
   output: 'standalone',
   async rewrites() {
+    const backendPort = process.env.BACKEND_PORT || '8080';
     return [
       {
         source: '/api/:path*',
-        destination: process.env.NODE_ENV === 'production'
-          ? 'http://localhost:8080/:path*'
-          : 'http://localhost:8080/:path*'
+        destination: `http://localhost:${backendPort}/:path*`
       }
     ]
   }

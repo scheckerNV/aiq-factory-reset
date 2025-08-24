@@ -335,5 +335,26 @@ if static_path.exists():
     app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
 if __name__ == "__main__":
+    import socket
+
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True, log_level="info")
+
+    # Find an available port dynamically
+    def find_available_port(start_port=8080, max_port=8200):
+        for port in range(start_port, max_port):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(('', port))
+                    return port
+            except socket.error:
+                continue
+        # Fall back to a high random port if nothing in range is available
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('', 0))  # Let OS choose port
+            return s.getsockname()[1]
+
+    # Use environment variable or find available port
+    port = int(os.getenv("BACKEND_PORT", find_available_port()))
+    print(f"🚀 Starting DCGM Chat Backend on port {port}")
+
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True, log_level="info")

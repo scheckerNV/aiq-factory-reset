@@ -171,7 +171,7 @@ fi
 
 # Build the frontend
 echo "🏗️  Building frontend..."
-npm run build
+BACKEND_PORT=$BACKEND_PORT npm run build
 
 # Function to cleanup background processes
 cleanup() {
@@ -207,6 +207,20 @@ else
     echo "   You can test with: curl $NIM_BASE_URL"
 fi
 
+# Find available port for backend
+echo "🔍 Finding available port for backend..."
+if [[ -z "$BACKEND_PORT" ]]; then
+    BACKEND_PORT=8080
+    for port in {8080..8200}; do
+        if ! ss -H -ltn | awk '{print $4}' | grep -q "[:.]:$port$"; then
+            BACKEND_PORT=$port
+            break
+        fi
+    done
+fi
+echo "✅ Using port $BACKEND_PORT for backend"
+export BACKEND_PORT
+
 # Start the backend
 echo "🚀 Starting backend server..."
 cd "$UI_DIR/backend"
@@ -237,7 +251,7 @@ echo "✅ Using port $FRONTEND_PORT for frontend"
 # Start the frontend
 echo "🚀 Starting frontend server..."
 cd "$UI_DIR/frontend"
-HOST=0.0.0.0 PORT=$FRONTEND_PORT npm run start -- -p "$FRONTEND_PORT" -H 0.0.0.0 &
+HOST=0.0.0.0 PORT=$FRONTEND_PORT BACKEND_PORT=$BACKEND_PORT npm run start -- -p "$FRONTEND_PORT" -H 0.0.0.0 &
 FRONTEND_PID=$!
 
 # Wait a moment for the frontend to start
@@ -254,8 +268,8 @@ echo ""
 echo "🎉 DCGM Agent Chat UI is running!"
 echo ""
 echo "📱 Frontend: http://localhost:$FRONTEND_PORT"
-echo "🔧 Backend API: http://localhost:8080"
-echo "📋 API Docs: http://localhost:8080/docs"
+echo "🔧 Backend API: http://localhost:$BACKEND_PORT"
+echo "📋 API Docs: http://localhost:$BACKEND_PORT/docs"
 echo ""
 echo "Press Ctrl+C to stop all services"
 echo ""
