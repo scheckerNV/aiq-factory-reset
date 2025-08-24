@@ -169,10 +169,6 @@ if [[ ! -d "node_modules" ]] || [[ "package.json" -nt "node_modules/.package-loc
     npm install
 fi
 
-# Build the frontend
-echo "🏗️  Building frontend..."
-BACKEND_PORT=$BACKEND_PORT npm run build
-
 # Function to cleanup background processes
 cleanup() {
     echo "🛑 Shutting down services..."
@@ -207,12 +203,14 @@ else
     echo "   You can test with: curl $NIM_BASE_URL"
 fi
 
-# Find available port for backend
+# Find available port for backend (avoiding common service ports)
 echo "🔍 Finding available port for backend..."
 if [[ -z "$BACKEND_PORT" ]]; then
-    BACKEND_PORT=8080
-    for port in {8080..8200}; do
-        if ! ss -H -ltn | awk '{print $4}' | grep -q "[:.]:$port$"; then
+    # Avoid 3000 (Grafana), 8000 (NIM), 9090 (Prometheus), 9400 (DCGM)
+    # Start from 8100 to avoid conflicts
+    BACKEND_PORT=8100
+    for port in {8100..8200}; do
+        if ! ss -H -ltn sport = :$port 2>/dev/null | grep -q "LISTEN"; then
             BACKEND_PORT=$port
             break
         fi
@@ -221,6 +219,9 @@ fi
 echo "✅ Using port $BACKEND_PORT for backend"
 export BACKEND_PORT
 
+# Set the full config path for backend
+export DCGM_CONFIG="$CONFIG_PATH"
+
 # Start the backend
 echo "🚀 Starting backend server..."
 cd "$UI_DIR/backend"
@@ -228,25 +229,51 @@ python main.py &
 BACKEND_PID=$!
 
 # Wait a moment for the backend to start
-sleep 3
+sleep 5
 
 # Check if backend is running
 if ! kill -0 $BACKEND_PID 2>/dev/null; then
     echo "❌ Backend failed to start"
+    echo "Check if port $BACKEND_PORT is available:"
+    ss -tlpn | grep ":$BACKEND_PORT " || echo "Port appears to be free"
     exit 1
 fi
 
-# Find available port for frontend (allow override via env var)
+# Verify backend is responding
+echo "🔍 Verifying backend is responding..."
+for i in {1..10}; do
+    if curl -s -f "http://localhost:$BACKEND_PORT/health" >/dev/null 2>&1; then
+        echo "✅ Backend is responding on port $BACKEND_PORT"
+        break
+    fi
+    if [ $i -eq 10 ]; then
+        echo "❌ Backend not responding after 10 seconds"
+        echo "Backend logs might show the issue. Check the terminal where it's running."
+        kill $BACKEND_PID 2>/dev/null || true
+        exit 1
+    fi
+    sleep 1
+done
+
+# Find available port for frontend (avoiding common service ports)
 echo "🔍 Finding available port for frontend..."
 if [[ -z "$FRONTEND_PORT" ]]; then
-    # Try using Node's detect-port for ultimate reliability
-    if command_exists npx; then
-        FRONTEND_PORT=$(npx -y detect-port 3100 2>/dev/null || find_available_port 3100)
-    else
-        FRONTEND_PORT=$(find_available_port 3100)
-    fi
+    # Avoid 3000 (Grafana) - start from 3100
+    FRONTEND_PORT=3100
+    for port in {3100..3200}; do
+        if ! ss -H -ltn sport = :$port 2>/dev/null | grep -q "LISTEN"; then
+            FRONTEND_PORT=$port
+            break
+        fi
+    done
 fi
 echo "✅ Using port $FRONTEND_PORT for frontend"
+
+# Now build the frontend with the correct backend port
+echo "🏗️  Building frontend..."
+echo "Frontend will connect to backend on port $BACKEND_PORT"
+cd "$UI_DIR/frontend"
+BACKEND_PORT=$BACKEND_PORT npm run build
 
 # Start the frontend
 echo "🚀 Starting frontend server..."
@@ -270,6 +297,11 @@ echo ""
 echo "📱 Frontend: http://localhost:$FRONTEND_PORT"
 echo "🔧 Backend API: http://localhost:$BACKEND_PORT"
 echo "📋 API Docs: http://localhost:$BACKEND_PORT/docs"
+echo "⚙️  Config: $(basename "$DCGM_CONFIG")"
+echo ""
+echo "Ports used (avoiding conflicts with Grafana:3000, Prometheus:9090, DCGM:9400):"
+echo "  Backend: $BACKEND_PORT (range: 8100-8200)"
+echo "  Frontend: $FRONTEND_PORT (range: 3100-3200)"
 echo ""
 echo "Press Ctrl+C to stop all services"
 echo ""
