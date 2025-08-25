@@ -234,3 +234,5 @@ node_modules/
 dist/
 .env*
 *.log
+examples/RAG/simple_rag/deploy/.volumes/
+.volumes/
