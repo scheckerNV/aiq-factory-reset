@@ -483,7 +483,7 @@ Command rules:
   set installmode FULL; commit; reboot).
 - If reinstall/reimage is required and the image name isn't known from CONTEXT, first discover it
   (e.g., cmsh -c "device use <node>; show softwareimage") or select a valid image shown in CONTEXT.
-- Include per-node verification (e.g., show status, dcgm) after corrective actions.
+- Include per-node verification (e.g., show, dcgm) after corrective actions.
 - Avoid cluster-wide changes; scope actions to affected nodes only.
 - If all nodes are healthy, output no commands in the Commands section.
 
