@@ -1259,7 +1259,7 @@ class CodeExecutionWithApprovalConfig(FunctionBaseConfig, name="code_execution_w
                               description="Target cluster hostname or IP for SSH execution. Use 'localhost' for local.")
     cluster_user: str = Field(..., description="SSH username for the target cluster")
     timeout: int = Field(default=600, description="Timeout (seconds) for command execution")
-    dry_run: bool = Field(default=False, description="If true, validate/approve but do not execute")
+    dry_run: bool = Field(default=True, description="If true, validate/approve but do not execute")
     coder_llm_name: str | None = Field(default=None, description="Optional LLM name for command validation")
     hitl_approval_fn: str = Field(..., description="Registered HITL function name to call for approval")
 

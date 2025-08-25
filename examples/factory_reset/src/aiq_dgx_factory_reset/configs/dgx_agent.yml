@@ -41,7 +41,7 @@ functions:
     cluster_host: "localhost"
     cluster_user: "root"
     timeout: 600
-    dry_run: true
+    dry_run: false
     hitl_approval_fn: hitl_code_approval
 
   dgx_react_agent:
