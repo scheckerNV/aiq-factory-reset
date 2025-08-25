@@ -56,7 +56,6 @@ def _extract_cmsh_commands(text: str) -> list[str]:
     cmds: list[str] = []
     in_code_block = False
 
-    # Log the raw LLM output for debugging
     logger.info("Raw LLM output for command extraction:")
     logger.info("=" * 50)
     logger.info("%s", text[:1000] + ("..." if len(text) > 1000 else ""))
@@ -66,19 +65,15 @@ def _extract_cmsh_commands(text: str) -> list[str]:
         original_line = line
         line = line.strip()
 
-        # Handle code blocks
         if line.startswith("```") or line.startswith("~~~"):
             in_code_block = not in_code_block
             continue
 
-        # Skip empty lines
         if not line:
             continue
 
-        # Remove bullet points, numbering, and common prefixes
         line = re.sub(r'^(?:[-*•]\s*|\d+[.)]\s*|[a-zA-Z][.)]\s*)', '', line)
 
-        # Remove backticks
         if line.startswith('`') and line.endswith('`') and len(line) > 2:
             line = line[1:-1].strip()
 
