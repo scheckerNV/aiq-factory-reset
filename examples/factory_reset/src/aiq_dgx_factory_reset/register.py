@@ -60,7 +60,7 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             from llama_index.embeddings.nvidia import NVIDIAEmbedding
             from llama_index.llms.nvidia import NVIDIA
 
-            # from llama_parse import LlamaParse  # Not currently used
+            # from llama_parse import LlamaParse
             # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
             llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
@@ -106,35 +106,35 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                 docs_path_obj = Path(docs_path)
 
                 # Process PDF files with LlamaParse for high-quality extraction
-                # pdf_files = list(docs_path_obj.glob("*.pdf"))
-                # if pdf_files and llama_api_key:
-                #     logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
+                pdf_files = list(docs_path_obj.glob("*.pdf"))
+                if pdf_files and llama_api_key:
+                    logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
 
-                #     for pdf_file in pdf_files:
-                #         try:
-                #             logger.info("Processing %s individually...", pdf_file.name)
+                    for pdf_file in pdf_files:
+                        try:
+                            logger.info("Processing %s individually...", pdf_file.name)
 
-                #             # Create a fresh parser instance for each file
-                #             file_parser = LlamaParse(verbose=True)
-                #             pdf_docs = file_parser.load_data(str(pdf_file))
+                            # Create a fresh parser instance for each file
+                            file_parser = LlamaParse(verbose=True)
+                            pdf_docs = file_parser.load_data(str(pdf_file))
 
-                #             for doc in pdf_docs:
-                #                 doc.metadata["source"] = str(pdf_file)
-                #                 doc.metadata["file_name"] = pdf_file.name
+                            for doc in pdf_docs:
+                                doc.metadata["source"] = str(pdf_file)
+                                doc.metadata["file_name"] = pdf_file.name
 
-                #             documents.extend(pdf_docs)
-                #             logger.info("Successfully processed %s (%d documents)", pdf_file.name, len(pdf_docs))
+                            documents.extend(pdf_docs)
+                            logger.info("Successfully processed %s (%d documents)", pdf_file.name, len(pdf_docs))
 
-                #             # Clean up
-                #             del file_parser
+                            # Clean up
+                            del file_parser
 
-                #         except Exception as e:
-                #             logger.warning("Failed to parse %s, skipping PDF processing: %s", pdf_file, e)
-                #             logger.info("Continuing with other document types...")
-                #             continue
-                # elif pdf_files and not llama_api_key:
-                #     logger.info("Found %d PDF files but no LlamaCloud API key provided, skipping PDF processing",
-                #                 len(pdf_files))
+                        except Exception as e:
+                            logger.warning("Failed to parse %s, skipping PDF processing: %s", pdf_file, e)
+                            logger.info("Continuing with other document types...")
+                            continue
+                elif pdf_files and not llama_api_key:
+                    logger.info("Found %d PDF files but no LlamaCloud API key provided, skipping PDF processing",
+                                len(pdf_files))
 
                 # Process markdown files if any
                 md_files = list(docs_path_obj.glob("*.md"))
@@ -1380,7 +1380,7 @@ async def code_execution_with_approval(config: CodeExecutionWithApprovalConfig, 
 print("✅ BCM Code Execution with Approval tool registered successfully")
 
 # ========================
-# Deterministic Netowrk Orchestrator (no LangGraph)
+# Deterministic Network Orchestrator (no LangGraph)
 # ========================
 
 
