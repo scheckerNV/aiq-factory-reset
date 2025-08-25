@@ -52,11 +52,52 @@ def _strip_ansi(text: str) -> str:
 
 
 def _extract_cmsh_commands(text: str) -> list[str]:
+    import re
     cmds: list[str] = []
+    in_code_block = False
+
+    # Log the raw LLM output for debugging
+    logger.info("🔍 Raw LLM output for command extraction:")
+    logger.info("=" * 50)
+    logger.info("%s", text[:1000] + ("..." if len(text) > 1000 else ""))
+    logger.info("=" * 50)
+
     for line in (text or "").splitlines():
-        s = line.strip()
-        if s.startswith('cmsh -c "') and s.endswith('"'):
-            cmds.append(s)
+        original_line = line
+        line = line.strip()
+
+        # Handle code blocks
+        if line.startswith("```") or line.startswith("~~~"):
+            in_code_block = not in_code_block
+            continue
+
+        # Skip empty lines
+        if not line:
+            continue
+
+        # Remove bullet points, numbering, and common prefixes
+        line = re.sub(r'^(?:[-*•]\s*|\d+[.)]\s*|[a-zA-Z][.)]\s*)', '', line)
+
+        # Remove backticks
+        if line.startswith('`') and line.endswith('`') and len(line) > 2:
+            line = line[1:-1].strip()
+
+        # Normalize quotes (smart quotes to regular quotes)
+        line = line.replace('"', '"').replace('"', '"').replace("'", "'").replace("'", "'")
+
+        # More flexible cmsh pattern matching
+        cmsh_pattern = re.compile(r'^cmsh\s+-c\s+["\']([^"\']+)["\']', re.IGNORECASE)
+        match = cmsh_pattern.match(line)
+
+        if match:
+            # Standardize to double quotes
+            cmd = f'cmsh -c "{match.group(1)}"'
+            cmds.append(cmd)
+            logger.info("✅ Extracted command: %s", cmd)
+        elif line.lower().startswith('cmsh'):
+            logger.info("⚠️  Found cmsh line but couldn't parse: %s", original_line)
+
+    logger.info("🎯 Total commands extracted: %d", len(cmds))
     return cmds
 
 
@@ -733,7 +774,9 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     # ReAct agent removed in minimal workflow
 
     async def generate_commands(state: OrchestratorState):
+        logger.info("generate_commands: Starting BCM command generation...")
         if not bcm_rag:
+            logger.error("generate_commands: BCM RAG tool not available!")
             return {**state, "bcm_commands": "❌ BCM RAG tool not available"}
         # Reacquire LLM only when needed
         try:
@@ -770,6 +813,12 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             llm_out = f"CONTEXT:\n{context}\n\n[Timed out generating BCM commands]"
         except Exception as e:
             llm_out = f"CONTEXT:\n{context}\n\n[Error: {str(e)}]"
+
+        # Debug logging for LLM output
+        logger.info("🔍 LLM generated BCM commands output:")
+        logger.info("=" * 60)
+        logger.info(llm_out)
+        logger.info("=" * 60)
 
         # 3) Extract only safe cmsh lines
         extracted = _extract_cmsh_commands(llm_out)
