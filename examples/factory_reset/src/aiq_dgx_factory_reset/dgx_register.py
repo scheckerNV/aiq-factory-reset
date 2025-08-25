@@ -560,6 +560,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         Adds deterministic keyword overrides to ensure reset requests are labeled correctly.
         """
         logger.info("analyze_and_decide: Starting analysis...")
+        logger.info("User input being analyzed: '%s'", (state.get("input", "") or "")[:200])
         import json as _json
 
         # Skip reader call in analyze_and_decide to avoid duplicates
@@ -588,16 +589,21 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         # === Deterministic overrides (user input only with tighter regex) ===
         user_input = (state.get("input", "") or "")
 
+        reset_actions = (r"(\bfactory\s*-?\s*)?\breset\b|\bre-?image\b|\bre-?install\b|\bre-?flash\b"
+                         r"|\bre-?provision\b|\bwipe(?:d|s|ing)?\b|\bclean\s+install\b|\brevert\b")
+        node_targets = r"node|nodes|cluster|superpod|dgx"
         reset_regex = re.compile(
-            r"(\bfactory\s*-?\s*reset\b|\bre-?image\b|\bre-?install\b|\bre-?flash\b|\bwipe\b|\bclean\sinstall\b)"
-            r".*\b(node|nodes|cluster|superpod|dgx)\b|"
-            r"\b(node|nodes|cluster|superpod|dgx)\b.*"
-            r"(\bfactory\s*-?\s*reset\b|\bre-?image\b|\bre-?install\b|\bre-?flash\b|\bwipe\b|\bclean\sinstall\b)",
+            rf"({reset_actions}).*\b({node_targets})\b|"
+            rf"\b({node_targets})\b.*({reset_actions})",
             re.IGNORECASE,
         )
+        command_verbs = (r"\bgive\s+me\b|\bprovide\b|\bshow\s+me\b|\bgenerate\b|\bcreate\b"
+                         r"|\bproduce\b|\bwrite\b|\boutput\b")
+        command_nouns = r"cmsh|commands?"
         generate_cmds_regex = re.compile(
-            r"(\bgenerate|\bcreate|\bproduce|\bwrite|\boutput)\b.*\b(commands?|cmsh)\b|"
-            r"\b(commands?|cmsh)\b.*(\bgenerate|\bcreate|\bproduce|\bwrite|\boutput)\b",
+            rf"({command_verbs}).*\b({command_nouns})\b|"
+            rf"\b({command_nouns})\b.*({command_verbs})|"
+            rf"\bcmsh\b.*\bcommands?\b|\bcommands?\b.*\bcmsh\b",
             re.IGNORECASE,
         )
 
@@ -605,22 +611,36 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         if reset_regex.search(user_input):
             if action_type != "reset_nodes":
                 logger.info("Orchestrator override: detected reset intent in user input -> action_type='reset_nodes'")
+                logger.info("Reset regex matched: %s", reset_regex.pattern)
                 action_type = "reset_nodes"
                 override_applied = True
 
         if (not override_applied and action_type == "diagnostics_only" and generate_cmds_regex.search(user_input)):
             logger.info("Orchestrator override: generate-commands intent -> action_type='generate_bcm_commands'")
+            logger.info("Generate commands regex matched: %s", generate_cmds_regex.pattern)
             action_type = "generate_bcm_commands"
             override_applied = True
 
-        # Explicit diagnostics intent clamp
+        # Explicit diagnostics intent clamp (but don't override command/reset intent)
         diagnostics_intent_regex = re.compile(
             r"\b(state|status|health|condition|what.?s\s+the\s+(current\s+)?state|overview|summary|list|show)\b",
             re.IGNORECASE,
         )
-        if diagnostics_intent_regex.search(user_input) and action_type != "diagnostics_only":
-            logger.info("Orchestrator clamp: explicit diagnostics intent -> action_type='diagnostics_only'")
+        # Only apply diagnostics clamp if there's no explicit command/reset intent
+        has_explicit_action_intent = re.search(
+            r'\b(cmsh|commands?|reset|re-?image|re-?install|re-?flash|wipe(?:d|s|ing)?|revert)\b',
+            user_input,
+            re.IGNORECASE)
+        if diagnostics_intent_regex.search(
+                user_input) and action_type != "diagnostics_only" and not has_explicit_action_intent:
+            logger.info(
+                "Orchestrator clamp: explicit diagnostics intent (no action override) -> action_type='diagnostics_only'"
+            )
             action_type = "diagnostics_only"
+        elif diagnostics_intent_regex.search(user_input) and has_explicit_action_intent:
+            logger.info(
+                "Orchestrator: diagnostics intent detected but explicit action intent found, keeping action_type='%s'",
+                action_type)
 
         # Safety floor: if LLM chose actions but user didn't explicitly request
         if action_type in ("generate_bcm_commands", "reset_nodes"):
@@ -667,6 +687,12 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         })
 
         logger.info("✅ analyze_and_decide: Analysis completed, action_type=%s", action_type)
+        if action_type == "reset_nodes":
+            logger.info("Routing decision: User requested node reset/reimage operations")
+        elif action_type == "generate_bcm_commands":
+            logger.info("Routing decision: User requested BCM command generation")
+        else:
+            logger.info("Routing decision: Treating as diagnostics-only request")
         return {**state, "analysis": analysis_report, "action_type": action_type, "decision_json": decision_json_out}
 
     async def summarize_results(state: OrchestratorState):
