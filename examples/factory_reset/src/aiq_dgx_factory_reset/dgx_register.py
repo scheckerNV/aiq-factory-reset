@@ -453,6 +453,53 @@ class DGXOrchestratorConfig(FunctionBaseConfig, name="dgx_orchestrator"):
         default="bcm_executor",
         description="Registered executor function name for BCM commands (code_execution_with_approval)",
     )
+    verbose: bool = Field(default=False, description="Enable extra logging")
+    commands_prompt: str | None = Field(default=None, description="Override command-gen prompt text")
+    commands_prompt_path: str | None = Field(default=None, description="Path to prompt file (optional)")
+
+
+DEFAULT_COMMANDS_PROMPT = """You are a Bright Cluster Manager (BCM) SRE. Using the CONTEXT
+(assessment/analysis/guidance), do the following:
+
+1) Identify nodes not in a good state (e.g., DOWN, unreachable, draining, error, failed DCGM/health).
+2) For each affected node, produce the minimal, safe corrective sequence to return it to a good/UP state.
+   Prefer non-destructive steps first (drain/disable, clear errors, reboot). Escalate to reinstall/reimage
+   only if indicated by CONTEXT.
+3) Use actual node and image names from CONTEXT. Do not invent values or use placeholders.
+   If a value is unknown, first emit a discovery command (e.g., show softwareimage) and only then
+   the corrective command that uses the discovered value.
+
+Output format (must match exactly):
+- First print a section header: Rationale:
+  - Then 3–5 concise bullets referencing snippets from CONTEXT (no raw dumps).
+- Then print a section header: Commands:
+  - Then output only bare command lines. Each line must be exactly: cmsh -c "<command>"
+  - Use ASCII double quotes. No bullets, numbering, code fences, prompts, comments, or trailing text.
+  - One command per line.
+
+Command rules:
+- Commands must be runnable as-is on this cluster: use real node names; no <placeholders>.
+- Use correct cmsh patterns (e.g., device; device use <node>; power reset; softwareimage use <image>;
+  set installmode FULL; commit; reboot).
+- If reinstall/reimage is required and the image name isn't known from CONTEXT, first discover it
+  (e.g., cmsh -c "device use <node>; show softwareimage") or select a valid image shown in CONTEXT.
+- Include per-node verification (e.g., show status, dcgm) after corrective actions.
+- Avoid cluster-wide changes; scope actions to affected nodes only.
+- If all nodes are healthy, output no commands in the Commands section.
+
+CONTEXT
+---
+{context}
+---"""
+
+
+def _load_cmd_prompt(cfg: DGXOrchestratorConfig) -> str:
+    """Load command prompt from config, file, or default."""
+    if cfg.commands_prompt:
+        return cfg.commands_prompt
+    if cfg.commands_prompt_path and os.path.exists(cfg.commands_prompt_path):
+        return Path(cfg.commands_prompt_path).read_text(encoding="utf-8")
+    return DEFAULT_COMMANDS_PROMPT
 
 
 @register_function(config_type=DGXOrchestratorConfig, framework_wrappers=[LLMFrameworkEnum.LANGCHAIN])
@@ -483,16 +530,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
     # No decision prompt in minimal mode; regex-based routing only
 
-    commands_prompt = PromptTemplate.from_template("""
-        You are a BCM expert. Based on the assessment and DGX guidance, generate exact Bright Cluster Manager commands
-        to perform the required DGX node actions.
-
-        Output two sections in this exact order:
-        Rationale: 3-5 concise bullets referencing snippets from CONTEXT.
-        Commands: each line MUST start with cmsh -c " and be one command per line.
-
-        CONTEXT\n---\n{context}\n---
-        """)
+    commands_prompt = PromptTemplate.from_template(_load_cmd_prompt(config))
 
     summarization_prompt = PromptTemplate.from_template("""
         You are a DGX/BCM SRE. Summarize the node assessment for the user's question.
