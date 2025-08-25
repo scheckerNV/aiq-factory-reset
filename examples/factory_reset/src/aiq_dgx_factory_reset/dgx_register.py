@@ -57,7 +57,7 @@ def _extract_cmsh_commands(text: str) -> list[str]:
     in_code_block = False
 
     # Log the raw LLM output for debugging
-    logger.info("🔍 Raw LLM output for command extraction:")
+    logger.info("Raw LLM output for command extraction:")
     logger.info("=" * 50)
     logger.info("%s", text[:1000] + ("..." if len(text) > 1000 else ""))
     logger.info("=" * 50)
@@ -532,10 +532,10 @@ def _filter_and_normalize(cmds: list[str], results_text: str, allowed_nodes: lis
 
         # Drop head/management nodes (tune to your environment)
         if re.search(r'\b(head|mgmt|master|ms\d*)\b', c, re.I):
-            logger.info("🚫 Filtered out head/mgmt node command: %s", original_cmd)
+            logger.info("Filtered out head/mgmt node command: %s", original_cmd)
             continue
         if "10.141.255.254" in c:  # known mgmt IP in your logs
-            logger.info("🚫 Filtered out management IP command: %s", original_cmd)
+            logger.info("Filtered out management IP command: %s", original_cmd)
             continue
 
         # Enforce allowed nodes if provided
@@ -544,7 +544,7 @@ def _filter_and_normalize(cmds: list[str], results_text: str, allowed_nodes: lis
             # Allow cluster-wide discovery-only lines
             if not node_found and not c.startswith('cmsh -c "device; list') and not c.startswith(
                     'cmsh -c "device; show"'):
-                logger.info("🚫 Filtered out non-allowed node command: %s", original_cmd)
+                logger.info("Filtered out non-allowed node command: %s", original_cmd)
                 continue
 
         # Fix cmsh verbs: show status -> show
@@ -552,9 +552,9 @@ def _filter_and_normalize(cmds: list[str], results_text: str, allowed_nodes: lis
 
         out.append(c)
         if c != original_cmd:
-            logger.info("🔄 Normalized command: %s -> %s", original_cmd, c)
+            logger.info("Normalized command: %s -> %s", original_cmd, c)
 
-    logger.info("🎯 Commands after filtering/normalization: %d out of %d", len(out), len(cmds))
+    logger.info("Commands after filtering/normalization: %d out of %d", len(out), len(cmds))
     return out
 
 
@@ -931,7 +931,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             llm_out = f"CONTEXT:\n{context}\n\n[Error: {str(e)}]"
 
         # Debug logging for LLM output
-        logger.info("🔍 LLM generated BCM commands output:")
+        logger.info("LLM generated BCM commands output:")
         logger.info("=" * 60)
         logger.info(llm_out)
         logger.info("=" * 60)
