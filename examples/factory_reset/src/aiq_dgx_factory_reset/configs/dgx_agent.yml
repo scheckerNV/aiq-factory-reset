@@ -125,7 +125,8 @@ workflow:
   executor_fn: bcm_executor
   verbose: true
   commands_prompt: |
-    You are a Bright Cluster Manager (BCM) SRE. Using the CONTEXT (assessment/analysis/guidance), do the following:
+    You are a Bright Cluster Manager (BCM) SRE. Using the CONTEXT (assessment/analysis/guidance), do the following
+    mission CRITICAL steps:
 
     1) Identify nodes not in a good state (e.g., DOWN, unreachable, draining, error, failed DCGM/health).
     2) For each affected node, produce the minimal, safe corrective sequence to return it to a good/UP state.
@@ -144,7 +145,7 @@ workflow:
       - One command per line.
 
     Command rules:
-    - Commands must be runnable as-is on this cluster: use real node hostnames; no <placeholders>.
+    - Commands must be runnable as-is on this cluster: use real node names; no <placeholders> or IP addresses.
     - Use correct cmsh patterns (e.g., device; device use <node hostname>; power reset; softwareimage use <image>;
       set installmode FULL; commit; reboot).
     - If reinstall/reimage is required and the image name isn't known from CONTEXT, first discover it
