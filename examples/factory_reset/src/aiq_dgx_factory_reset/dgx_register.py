@@ -493,6 +493,71 @@ CONTEXT
 ---"""
 
 
+def _extract_requested_nodes(s: str) -> list[str]:
+    """Extract node names like node001, node002 from user input."""
+    return sorted(set(re.findall(r'\bnode\d+\b', s.lower())))
+
+
+def _parse_host_ip_map(results_text: str) -> dict[str, str]:
+    """Parse hostname to IP mapping from assessment results."""
+    host_ip = {}
+    for line in results_text.splitlines():
+        # Look for patterns like "hostname: node001 ... ip: 10.141.0.1" or tabular forms
+        m = re.search(r'\b(?:hostname|name)\s*[:=]\s*(\S+).*?\bip\s*[:=]\s*(\d+\.\d+\.\d+\.\d+)', line, re.I)
+        if m:
+            host = m.group(1)
+            ip = m.group(2)
+            host_ip[host] = ip
+        # Also handle simpler formats like "node001 10.141.0.1"
+        elif re.match(r'^\s*(node\d+)\s+(\d+\.\d+\.\d+\.\d+)', line):
+            parts = line.strip().split()
+            if len(parts) >= 2:
+                host_ip[parts[0]] = parts[1]
+    return host_ip
+
+
+def _filter_and_normalize(cmds: list[str], results_text: str, allowed_nodes: list[str]) -> list[str]:
+    """Filter and normalize commands: replace IPs with hostnames, enforce node constraints, fix syntax."""
+    host_ip = _parse_host_ip_map(results_text)
+    ip_host = {ip: host for host, ip in host_ip.items()}
+    out = []
+
+    for c in cmds:
+        original_cmd = c
+
+        # Replace IP with hostname if found
+        for ip, host in ip_host.items():
+            if f"device use {ip}" in c:
+                c = c.replace(f"device use {ip}", f"device use {host}")
+
+        # Drop head/management nodes (tune to your environment)
+        if re.search(r'\b(head|mgmt|master|ms\d*)\b', c, re.I):
+            logger.info("🚫 Filtered out head/mgmt node command: %s", original_cmd)
+            continue
+        if "10.141.255.254" in c:  # known mgmt IP in your logs
+            logger.info("🚫 Filtered out management IP command: %s", original_cmd)
+            continue
+
+        # Enforce allowed nodes if provided
+        if allowed_nodes:
+            node_found = any(f"device use {node}" in c for node in allowed_nodes)
+            # Allow cluster-wide discovery-only lines
+            if not node_found and not c.startswith('cmsh -c "device; list') and not c.startswith(
+                    'cmsh -c "device; show"'):
+                logger.info("🚫 Filtered out non-allowed node command: %s", original_cmd)
+                continue
+
+        # Fix cmsh verbs: show status -> show
+        c = c.replace("; show status", "; show")
+
+        out.append(c)
+        if c != original_cmd:
+            logger.info("🔄 Normalized command: %s -> %s", original_cmd, c)
+
+    logger.info("🎯 Commands after filtering/normalization: %d out of %d", len(out), len(cmds))
+    return out
+
+
 def _load_cmd_prompt(cfg: DGXOrchestratorConfig) -> str:
     """Load command prompt from config, file, or default."""
     if cfg.commands_prompt:
@@ -564,6 +629,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         results_directory: str
         results_text: str
         results_dir: str
+        requested_nodes: list[str]
 
     async def assess_node(state: OrchestratorState):
         logger.info("assess_node: Starting node assessment...")
@@ -659,6 +725,10 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
         # Store results query in state for use in assess_node
         state["results_query"] = results_query
+
+        # Extract and store requested target nodes
+        requested_nodes = _extract_requested_nodes(user_input)
+        state["requested_nodes"] = requested_nodes
 
         # === Minimal classification: regex-only ===
         extracted_json = "{}"
@@ -838,7 +908,15 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         dgx_guidance = state.get("dgx_guidance", "")
         assessment = state.get("assessment", "")
         analysis = state.get("analysis", "")
-        context = ("ASSESSMENT:\n" + (assessment or "") + "\n\n"
+        results_text = state.get("results_text", "")
+
+        # Get requested nodes for constraint enforcement
+        allowed_nodes = state.get("requested_nodes", [])
+        allowed_nodes_str = ", ".join(allowed_nodes) if allowed_nodes else "(not specified)"
+
+        context = ("ALLOWED_NODES:\n" + allowed_nodes_str + "\n\n"
+                   "ASSESSMENT:\n" + (assessment or "") + "\n\n"
+                   "RESULTS (parsed files):\n" + (results_text or "") + "\n\n"
                    "ANALYSIS:\n" + (analysis or "") + "\n\n"
                    "DGX GUIDANCE:\n" + (dgx_guidance or "") + "\n\n"
                    "BCM DOCS:\n" + (bcm_docs or ""))
@@ -863,7 +941,12 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         if not extracted:
             return {**state, "bcm_commands": "❌ No valid cmsh commands extracted. Skipping execution."}
 
-        commands_payload = "\n".join(extracted)
+        # 4) Filter and normalize commands
+        filtered = _filter_and_normalize(extracted, results_text, allowed_nodes)
+        if not filtered:
+            return {**state, "bcm_commands": "❌ No valid commands remaining after filtering. Skipping execution."}
+
+        commands_payload = "\n".join(filtered)
         return {**state, "bcm_commands": commands_payload}
 
     async def execute_commands(state: OrchestratorState):

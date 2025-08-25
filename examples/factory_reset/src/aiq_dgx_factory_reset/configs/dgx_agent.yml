@@ -136,6 +136,12 @@ workflow:
        If a value is unknown, first emit a discovery command (e.g., show softwareimage) and only then
        the corrective command that uses the discovered value.
 
+    CRITICAL CONSTRAINTS:
+    - Only generate commands for nodes listed in ALLOWED_NODES. If ALLOWED_NODES is "(not specified)",
+      operate only on nodes explicitly identified as unhealthy in RESULTS.
+    - NEVER include head/management nodes unless the user explicitly says so.
+    - Use the hostname field exactly as shown in RESULTS. NEVER use IP addresses in device use commands.
+
     Output format (must match exactly):
     - First print a section header: Rationale:
       - Then 3–5 concise bullets referencing snippets from CONTEXT (no raw dumps).
@@ -144,12 +150,22 @@ workflow:
       - Use ASCII double quotes. No bullets, numbering, code fences, prompts, comments, or trailing text.
       - One command per line.
 
+    Command examples (correct patterns):
+    - cmsh -c "device use node001; show"
+    - cmsh -c "device use node001; power reset"
+    - cmsh -c "softwareimage use dgx-image; device use node001; set installmode FULL; commit; reboot"
+    - cmsh -c "device use node001; drain --setactions reboot"
+
+    NEVER produce:
+    - cmsh -c "device use 10.141.0.1; ..." (IP addresses)
+    - cmsh -c "device use node001; show status" (incorrect verb)
+    - Commands targeting head/mgmt nodes
+
     Command rules:
-    - Commands must be runnable as-is on this cluster: use real node names; no <placeholders> or IP addresses.
-    - Use correct cmsh patterns (e.g., device; device use <node hostname>; power reset; softwareimage use <image>;
-      set installmode FULL; commit; reboot).
+    - Commands must be runnable as-is on this cluster: use real node hostnames from RESULTS.
+    - Use correct cmsh patterns (device; device use <hostname>; <action>).
     - If reinstall/reimage is required and the image name isn't known from CONTEXT, first discover it
-      (e.g., cmsh -c "device use <node hostname>; show softwareimage") or select a valid image shown in CONTEXT.
+      (e.g., cmsh -c "device use <hostname>; show softwareimage") or select a valid image shown in CONTEXT.
     - Include per-node verification (e.g., show, dcgm) after corrective actions.
     - Avoid cluster-wide changes; scope actions to affected nodes only.
     - If all nodes are healthy, output no commands in the Commands section.
