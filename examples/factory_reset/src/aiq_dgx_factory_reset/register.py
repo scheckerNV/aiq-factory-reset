@@ -521,10 +521,10 @@ async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder:
 Assessment Output:
 {stdout.decode('utf-8')}
 
-📁 Results saved {location} in timestamped directory.
+Results saved {location} in timestamped directory.
 Use the network_results_reader tool to analyze the results.
 
-🔍 Next steps:
+Next steps:
 1. Use network_results_reader to parse the assessment data
 2. Compare current state with desired configuration
 3. Generate remediation plan based on differences
@@ -1167,9 +1167,9 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             m = re.search(r"(/tmp/network_assessment_[0-9_]+)", assess_out)
             if m:
                 results_dir = m.group(1)
-                logger.info("📁 assess: Extracted results directory: %s", results_dir)
+                logger.info("assess: Extracted results directory: %s", results_dir)
             else:
-                logger.warning("⚠️ assess: Could not extract results directory from assessment output")
+                logger.warning("assess: Could not extract results directory from assessment output")
 
         # Read results with explicit directory if available
         results_text = ""
