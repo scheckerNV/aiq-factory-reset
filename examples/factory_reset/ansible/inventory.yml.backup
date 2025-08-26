@@ -1,3 +1,5 @@
+plugin: yaml
+strict: true
 all:
   children:
     compute:
