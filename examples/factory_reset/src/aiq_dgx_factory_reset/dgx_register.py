@@ -25,11 +25,10 @@ from aiq.data_models.function import FunctionBaseConfig
 
 logger = logging.getLogger(__name__)
 
-# Default timeouts and limits
 REMOTE_CMD_TIMEOUT = 120
 LOCAL_CMD_TIMEOUT = 300
 LLM_STEP_TIMEOUT = 90
-MAX_FILE_READ_CHARS = 262_144  # 256 KiB approx
+MAX_FILE_READ_CHARS = 262_144
 
 
 def _truncate_text(text: str, limit: int = MAX_FILE_READ_CHARS) -> str:
@@ -40,7 +39,6 @@ def _truncate_text(text: str, limit: int = MAX_FILE_READ_CHARS) -> str:
     return text[:limit] + "\n...[truncated]...\n"
 
 
-# ANSI escape sequence pattern for cleaning terminal output
 ANSI_ESCAPE = re.compile(r'\x1B[[0-?][ -/][@-~]')
 
 
@@ -77,22 +75,19 @@ def _extract_cmsh_commands(text: str) -> list[str]:
         if line.startswith('`') and line.endswith('`') and len(line) > 2:
             line = line[1:-1].strip()
 
-        # Normalize quotes (smart quotes to regular quotes)
         line = line.replace('"', '"').replace('"', '"').replace("'", "'").replace("'", "'")
 
-        # More flexible cmsh pattern matching
         cmsh_pattern = re.compile(r'^cmsh\s+-c\s+["\']([^"\']+)["\']', re.IGNORECASE)
         match = cmsh_pattern.match(line)
 
         if match:
-            # Standardize to double quotes
             cmd = f'cmsh -c "{match.group(1)}"'
             cmds.append(cmd)
             logger.info("✅ Extracted command: %s", cmd)
         elif line.lower().startswith('cmsh'):
             logger.info("⚠️  Found cmsh line but couldn't parse: %s", original_line)
 
-    logger.info("🎯 Total commands extracted: %d", len(cmds))
+    logger.info("Total commands extracted: %d", len(cmds))
     return cmds
 
 
@@ -156,20 +151,16 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
             if not os.path.exists(script_path_on_disk):
                 return f"❌ node_assessment.sh not found at {script_path_on_disk}"
 
-            # Read the shell script content from the external file (same as network assessment)
             with open(script_path_on_disk, "r", encoding="utf-8") as f:
                 script_content = f.read()
 
-            # Use tempfile approach like network assessment tool
             with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
                 f.write(script_content)
                 script_path = f.name
 
-            # Make executable
             os.chmod(script_path, 0o755)
 
             if config.cluster_host == "localhost":
-                # Execute locally using the tempfile (same pattern as network tool remote execution)
                 cmd = ["/bin/bash", script_path]
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
@@ -179,7 +170,6 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
 
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
 
-                # Clean up tempfile
                 os.unlink(script_path)
 
                 if proc.returncode == 0:
@@ -201,7 +191,6 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                     s_err = stderr.decode("utf-8", errors="replace")
                     return f"❌ Local assessment failed:\n{s_err.strip()}"
             else:
-                # Remote execution (same as network assessment)
                 scp_cmd = ["scp", script_path, f"{config.cluster_user}@{config.cluster_host}:/tmp/node_assessment.sh"]
 
                 scp_process = await asyncio.create_subprocess_exec(*scp_cmd,
@@ -210,10 +199,9 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
                 await scp_process.communicate()
 
                 if scp_process.returncode != 0:
-                    os.unlink(script_path)  # Clean up tempfile
+                    os.unlink(script_path)
                     return "❌ Failed to upload assessment script to cluster"
 
-                # Execute script on cluster
                 ssh_cmd = [
                     "ssh",
                     f"{config.cluster_user}@{config.cluster_host}",
@@ -226,7 +214,6 @@ async def node_assessment_tool(config: NodeAssessmentToolConfig, _builder: Build
 
                 stdout, stderr = await asyncio.wait_for(ssh_process.communicate(), timeout=config.timeout)
 
-                # Clean up local tempfile
                 os.unlink(script_path)
 
                 if ssh_process.returncode == 0:
@@ -305,13 +292,11 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
             }
 
             patterns = None
-            # First try keyword matching
             for key, vals in files_map.items():
                 if key in query.lower():
                     patterns = vals
                     break
 
-            # If no keyword match, try specific filename matching
             if patterns is None:
                 for key, vals in files_map.items():
                     for filename in vals:
@@ -321,13 +306,11 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
                     if patterns:
                         break
 
-            # Default fallback
             if patterns is None:
                 patterns = files_map["summary"]
 
             if config.cluster_host == "localhost":
                 latest_dir = None
-                # Allow explicit dir in query to override
                 explicit = None
                 for token in query.split():
                     if token.startswith("/tmp/node_assessment_") and Path(token).exists():
@@ -336,12 +319,10 @@ async def node_results_reader(config: NodeResultsReaderConfig, _builder: Builder
                 if explicit and explicit.is_dir():
                     latest_dir = explicit
                 else:
-                    # Prefer stable symlink if present
                     symlink_path = Path("/tmp/node_assessment_latest")
                     if symlink_path.exists() and symlink_path.is_dir():
                         latest_dir = symlink_path
                     else:
-                        # Find latest local directory matching glob (absolute glob)
                         matches = sorted(Path("/tmp").glob(Path(config.results_directory).name), reverse=True)
                         for p in matches:
                             if p.is_dir():
@@ -497,13 +478,11 @@ def _parse_host_ip_map(results_text: str) -> dict[str, str]:
     """Parse hostname to IP mapping from assessment results."""
     host_ip = {}
     for line in results_text.splitlines():
-        # Look for patterns like "hostname: node001 ... ip: 10.141.0.1" or tabular forms
         m = re.search(r'\b(?:hostname|name)\s*[:=]\s*(\S+).*?\bip\s*[:=]\s*(\d+\.\d+\.\d+\.\d+)', line, re.I)
         if m:
             host = m.group(1)
             ip = m.group(2)
             host_ip[host] = ip
-        # Also handle simpler formats like "node001 10.141.0.1"
         elif re.match(r'^\s*(node\d+)\s+(\d+\.\d+\.\d+\.\d+)', line):
             parts = line.strip().split()
             if len(parts) >= 2:
@@ -520,29 +499,22 @@ def _filter_and_normalize(cmds: list[str], results_text: str, allowed_nodes: lis
     for c in cmds:
         original_cmd = c
 
-        # Replace IP with hostname if found
         for ip, host in ip_host.items():
             if f"device use {ip}" in c:
                 c = c.replace(f"device use {ip}", f"device use {host}")
 
-        # Drop head/management nodes (tune to your environment)
         if re.search(r'\b(head|mgmt|master|ms\d*)\b', c, re.I):
             logger.info("Filtered out head/mgmt node command: %s", original_cmd)
-            continue
-        if "10.141.255.254" in c:  # known mgmt IP in your logs
-            logger.info("Filtered out management IP command: %s", original_cmd)
             continue
 
         # Enforce allowed nodes if provided
         if allowed_nodes:
             node_found = any(f"device use {node}" in c for node in allowed_nodes)
-            # Allow cluster-wide discovery-only lines
             if not node_found and not c.startswith('cmsh -c "device; list') and not c.startswith(
                     'cmsh -c "device; show"'):
                 logger.info("Filtered out non-allowed node command: %s", original_cmd)
                 continue
 
-        # Fix cmsh verbs: show status -> show
         c = c.replace("; show status", "; show")
 
         out.append(c)

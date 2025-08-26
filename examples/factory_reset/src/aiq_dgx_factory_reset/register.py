@@ -5,15 +5,19 @@ This module provides accurate retrieval of BCM (Bright Cluster Manager) document
 using LlamaIndex, LlamaParse, and NVIDIA embeddings for high-quality RAG responses.
 """
 
+import asyncio
 import glob
 import logging
 import os
+import re
 from pathlib import Path
+from typing import TypedDict
 
 import yaml
 from pydantic import Field
 
 from aiq.builder.builder import Builder
+from aiq.builder.framework_enum import LLMFrameworkEnum
 from aiq.builder.function_info import FunctionInfo
 from aiq.cli.register_workflow import register_function
 from aiq.data_models.function import FunctionBaseConfig
@@ -990,224 +994,6 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
 
 print("✅ Network Config Extractor tool registered successfully")
 
-# ========================
-# Simple Network Factory Reset Orchestrator
-# ========================
-
-
-class SimpleNetworkOrchestratorConfig(FunctionBaseConfig, name="simple_network_orchestrator"):
-    """Simple orchestrator that just calls tools in sequence"""
-    pass
-
-
-@register_function(config_type=SimpleNetworkOrchestratorConfig)
-async def simple_network_orchestrator(config: SimpleNetworkOrchestratorConfig, builder: Builder):
-    """Simple orchestrator - just calls tools in sequence without embedded logic"""
-
-    async def _simple_run(input_text: str) -> str:
-        logger.info("🚀 Simple Network Factory Reset Orchestrator")
-
-        # Step 1: Run network assessment
-        logger.info("Step 1: Running network assessment")
-        assess_tool = builder.get_function("network_assessment_tool")
-        assess_result = await assess_tool.ainvoke("Run comprehensive network assessment")
-        logger.info("✅ Assessment completed")
-
-        # Step 2: Read full assessment data (let the reader handle all the complexity)
-        logger.info("Step 2: Reading assessment data")
-        reader_tool = builder.get_function("network_results_reader")
-        current_state = await reader_tool.ainvoke("full")
-        logger.info("✅ Current state loaded (%d chars)", len(current_state))
-
-        # Step 3: Extract desired config from YAML (let the extractor handle the parsing)
-        logger.info("Step 3: Extracting target configuration")
-        config_tool = builder.get_function("network_config_extractor")
-        desired_state = await config_tool.ainvoke("extract config")
-        logger.info("✅ Target config loaded")
-
-        # Step 4: Generate BCM commands
-        logger.info("Step 4: Generating BCM commands")
-        bcm_tool = builder.get_function("bcm_documentation_rag")
-        context = f"CURRENT STATE:\n{current_state[:800]}\n\nTARGET CONFIG:\n{desired_state}"
-        bcm_query = ("You are a BCM expert. Use the context to plan then generate commands.\n"
-                     "Return two sections in this exact order:\n"
-                     "Rationale: 3-5 concise bullets citing config/doc snippets used.\n"
-                     "Commands: each line MUST start with cmsh -c \" and be one command per line.\n\n"
-                     "Requirements for commands: use physical interfaces, match network names and IP ranges.\n\n"
-                     f"CONTEXT:\n{context}")
-        commands = await bcm_tool.ainvoke(bcm_query)
-        logger.info("✅ Commands generated")
-
-        # Step 5: Execute with approval
-        logger.info("Step 5: Executing commands with approval")
-        exec_tool = builder.get_function("code_execution_with_approval")
-        result = await exec_tool.ainvoke(commands)
-        logger.info("✅ Execution completed")
-
-        return result
-
-    yield FunctionInfo.from_fn(_simple_run, description="Simple network factory reset orchestrator")
-
-
-print("✅ Simple Network Orchestrator registered successfully")
-
-# ========================
-# LangGraph Orchestrator - implement later
-# ========================
-
-# class NetworkWorkflowOrchestratorConfig(FunctionBaseConfig, name="network_workflow_orchestrator"):
-#     max_retries: int = Field(default=1, description="Maximum retry attempts")  # Reduced from 3 to 1
-#     quality_threshold: float = Field(default=0.3, description="Minimum quality score for commands")  # Lowered threshold
-
-# @register_function(config_type=NetworkWorkflowOrchestratorConfig)
-# async def network_workflow_orchestrator(config: NetworkWorkflowOrchestratorConfig, builder: Builder):
-#     """LangGraph orchestrator that uses your existing tools"""
-
-#     import re
-#     from typing import TypedDict
-
-#     from langgraph.graph import END
-#     from langgraph.graph import StateGraph
-
-#     def extract_user_input(inp: str | dict) -> str:
-#         """Extract raw user question from Reasoning Agent plan or pass-through dict."""
-#         if isinstance(inp, dict):
-#             if "input_text" in inp:
-#                 return str(inp["input_text"]).strip()
-#             for v in inp.values():
-#                 if isinstance(v, str) and v.strip():
-#                     return v.strip()
-#             return str(inp)
-#         if isinstance(inp, str):
-#             m = re.search(r'ORIGINAL REQUEST:\s*\{.*?"content":\s*"([^"]+)"', inp, re.S)
-#             return m.group(1).strip() if m else inp.strip()
-#         return str(inp).strip()
-
-#     # NOTE:
-#     # Do NOT fetch tools at build time. The AIQ builder may construct this
-#     # function before its dependencies, causing lookup failures.
-#     # Instead, fetch tool handles lazily inside each node when executed.
-
-#     class WorkflowState(TypedDict):
-#         input: str
-#         assessment_complete: bool
-#         commands_generated: bool
-#         quality_score: float
-#         retry_count: int
-#         final_output: str
-
-#     async def assessment_node(state: WorkflowState):
-#         """Use your existing assessment tool"""
-#         logger.info("LangGraph: running assessment_node")
-#         assessment_tool = builder.get_function("network_assessment_tool")
-#         task = extract_user_input(state["input"])
-#         result = await assessment_tool.ainvoke(task)
-#         return {**state, "assessment_complete": True, "assessment_data": result}
-
-#     async def analysis_node(state: WorkflowState):
-#         """Use your existing results reader"""
-#         results_reader = builder.get_function("network_results_reader")
-#         # Trigger a summary read of latest assessment results; input string is not used meaningfully
-#         result = await results_reader.ainvoke("")
-#         return {**state, "analysis_complete": True, "analysis_data": result}
-
-#     async def research_node(state: WorkflowState):
-#         """Use your existing networking expert tool"""
-#         # Ask for concrete, actionable guidance tailored to producing cmsh commands
-#         task = extract_user_input(state["input"])
-#         query = ("DGX SuperPOD networking reset. "
-#                  f"Task: {task}. "
-#                  "Return concise, actionable steps that directly lead to BCM cmsh commands. "
-#                  "Avoid high-level prose.")
-#         networking_rag_tool = builder.get_function("networking_expert_rag")
-#         result = await networking_rag_tool.ainvoke(query)
-#         return {**state, "research_complete": True, "research_data": result}
-
-#     async def command_generation_node(state: WorkflowState):
-#         """Use your existing BCM RAG tool"""
-#         bcm_rag_tool = builder.get_function("bcm_documentation_rag")
-#         task = extract_user_input(state["input"])
-#         context = ("Assessment Summary:\n" + (state.get('assessment_data', '') or '').strip() + "\n\n" +
-#                    "Analysis Summary:\n" + (state.get('analysis_data', '') or '').strip() + "\n\n" +
-#                    "Research Summary:\n" + (state.get('research_data', '') or '').strip() + "\n\n" + "Instruction:\n" +
-#                    f"Generate the EXACT Bright Cluster Manager commands, using cmsh -c, for task: {task}.\n" +
-#                    "Revert the cluster networking to a known good state.\n" + "Requirements:\n" +
-#                    "- Output ONLY commands, one per line, no explanations.\n" +
-#                    "- Each line MUST start with: cmsh -c \"\n" +
-#                    "- Include necessary device/network/category contexts and commit where required.\n")
-#         result = await bcm_rag_tool.ainvoke(context)
-
-#         # Improved quality: count lines that start with exact cmsh command prefix
-#         cmsh_lines = []
-#         for line in result.splitlines():
-#             stripped = line.strip()
-#             if stripped.startswith('cmsh -c "'):
-#                 cmsh_lines.append(stripped)
-#         quality = min(1.0, len(cmsh_lines) / 5.0)
-
-#         return {
-#             **state,
-#             "commands_generated": True,
-#             "commands": result,
-#             "quality_score": quality,
-#             "retry_count": state.get("retry_count", 0) + 1
-#         }
-
-#     def should_retry(state: WorkflowState):
-#         """Conditional logic: retry if quality is low"""
-#         if (state["quality_score"] < config.quality_threshold and state["retry_count"] < config.max_retries):
-#             return "generate_commands"  # Fixed: was "retry_commands"
-#         return "finalize"
-
-#     async def finalize_node(state: WorkflowState):
-#         return {**state, "final_output": state.get("commands", "No commands generated")}
-
-#     # Build the LangGraph workflow
-#     workflow = StateGraph(WorkflowState)
-
-#     # Add nodes (using your existing tools)
-#     workflow.add_node("assess", assessment_node)
-#     workflow.add_node("analyze", analysis_node)
-#     workflow.add_node("research", research_node)
-#     workflow.add_node("generate_commands", command_generation_node)
-#     workflow.add_node("finalize", finalize_node)
-
-#     # Define the flow
-#     workflow.set_entry_point("assess")
-#     workflow.add_edge("assess", "analyze")
-#     workflow.add_edge("analyze", "research")
-#     workflow.add_edge("research", "generate_commands")
-
-#     # Conditional edge with retry loop
-#     workflow.add_conditional_edges(
-#         "generate_commands",
-#         should_retry,
-#         {
-#             "generate_commands": "generate_commands",  # Loop back - Fixed mapping
-#             "finalize": "finalize"  # Exit
-#         })
-
-#     workflow.add_edge("finalize", END)
-
-#     app = workflow.compile()
-
-#     async def _orchestrated_workflow(input_text: str) -> str:
-#         """Execute the LangGraph workflow using your existing tools"""
-#         initial_state: WorkflowState = {
-#             "input": input_text,
-#             "assessment_complete": False,
-#             "commands_generated": False,
-#             "quality_score": 0.0,
-#             "retry_count": 0,
-#             "final_output": ""
-#         }
-#         result = await app.ainvoke(initial_state)
-#         return result.get("final_output", "Workflow failed")
-
-#     yield FunctionInfo.from_fn(_orchestrated_workflow,
-#                                description="LangGraph orchestrator using existing network tools")
-
-# print("✅ LangGraph Network Workflow Orchestrator registered successfully")
 
 # ========================
 # Human-in-the-Loop (HITL) Approval and BCM Command Executor
@@ -1378,6 +1164,356 @@ async def code_execution_with_approval(config: CodeExecutionWithApprovalConfig, 
 
 
 print("✅ BCM Code Execution with Approval tool registered successfully")
+
+
+# ========================
+# LangGraph Network Orchestrator
+# ========================
+
+
+def _net_truncate(text: str, limit: int = 200_000) -> str:
+    return text if not text or len(text) <= limit else text[:limit] + "\n...[truncated]...\n"
+
+
+def _net_extract_cmsh_commands(text: str) -> list[str]:
+    cmds = []
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if s.startswith('cmsh -c "') or s.startswith("cmsh -c '") or s.lower().startswith("cmsh -c "):
+            # normalize quotes to double
+            if s.startswith("cmsh -c '"):
+                s = 'cmsh -c "' + s[len("cmsh -c '"):-1] + '"'
+            cmds.append(s)
+    return cmds
+
+
+def _net_filter_placeholders(cmds: list[str]) -> list[str]:
+    forbidden = ["<", "PLACEHOLDER", "NODE_NAME", "INTERFACE", "ROUTE_NAME"]
+    out = []
+    for c in cmds:
+        if any(tok in c for tok in forbidden):
+            logger.info("Filtered (placeholder): %s", c)
+            continue
+        out.append(c.rstrip(";"))
+    return out
+
+
+def _net_extract_requested_nodes(s: str) -> list[str]:
+    return sorted(set(re.findall(r'\bnode\d+\b', (s or "").lower())))
+
+
+# Prompts
+DEFAULT_NET_COMMANDS_PROMPT = """You are a Bright Cluster Manager (BCM) SRE. \
+Using the CONTEXT, produce networking commands.
+
+Output format (must match exactly):
+- First print a section header: Rationale:
+  - Then 3–5 concise bullets referencing snippets from CONTEXT (no raw dumps).
+- Then print a section header: Commands:
+  - Output only bare lines: cmsh -c "<command>"
+  - ASCII double quotes, no bullets/numbering/code fences/comments.
+  - One command per line.
+
+Rules:
+- Scope to ALLOWED_NODES and referenced interfaces/networks only; do not change head/mgmt nodes.
+- Prefer safe, idempotent steps for diagnostics-only.
+- If USER_REQUEST explicitly asks to reset/revert networking, generate the per-node corrective \
+sequence for each node in ALLOWED_NODES, covering interface reconfig, network assignment, and commit. \
+Include verification (show).
+- Use actual names from CONTEXT; do not invent values. If unknown, emit a discovery command \
+first (e.g., device; device use <node>; network; list).
+- Avoid cluster-wide changes.
+
+CONTEXT
+---
+{context}
+---"""
+
+NET_SUMMARY_PROMPT = """You are a BCM networking SRE. Summarize the network assessment for the user's question.
+
+Question: {question}
+
+Assessment Extract:
+{results}
+
+Write a concise, actionable summary:
+- Current networking state: notable issues, unreachable nodes, misconfigs
+- Critical incidents
+- Collection gaps and implications
+- Recommended next steps (2–5 bullets), safe and non-destructive
+Keep it tight; no raw dumps.
+"""
+
+
+class NetworkOrchestratorConfig(FunctionBaseConfig, name="network_orchestrator"):
+    reasoning_llm_name: str = Field(description="LLM used for reasoning and planning")
+    executor_fn: str = Field(default="code_execution_with_approval", description="Executor tool to run cmsh commands")
+    commands_prompt: str | None = Field(default=None, description="Override command-gen prompt text")
+    commands_prompt_path: str | None = Field(default=None, description="Path to prompt file (optional)")
+    include_llm_rationale: bool = Field(default=True, description="Include LLM rationale in final output")
+    include_prompts_in_output: bool = Field(default=False, description="Include rendered prompts/outputs (debug)")
+
+
+def _net_load_prompt(cfg: NetworkOrchestratorConfig) -> str:
+    if cfg.commands_prompt:
+        return cfg.commands_prompt
+    if cfg.commands_prompt_path and os.path.exists(cfg.commands_prompt_path):
+        return Path(cfg.commands_prompt_path).read_text(encoding="utf-8")
+    return DEFAULT_NET_COMMANDS_PROMPT
+
+
+@register_function(config_type=NetworkOrchestratorConfig, framework_wrappers=[LLMFrameworkEnum.LANGCHAIN])
+async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Builder):
+    from langchain_core.output_parsers import StrOutputParser
+    from langchain_core.prompts import PromptTemplate
+    from langgraph.graph import END
+    from langgraph.graph import StateGraph
+
+    commands_prompt = PromptTemplate.from_template(_net_load_prompt(config))
+    summary_prompt = PromptTemplate.from_template(NET_SUMMARY_PROMPT)
+
+    class State(TypedDict, total=False):
+        input: str
+        action_type: str
+        results_query: str
+        requested_nodes: list[str]
+        assessment: str
+        results_text: str
+        analysis: str
+        assessment_summary: str
+        bcm_commands: str
+        bcm_rationale: str
+        llm_cmds_raw: str
+        summary_prompt: str
+        execution_result: str
+        final_output: str
+
+    # Routing (regex-first)
+    def classify(user_input: str) -> tuple[str, str, list[str]]:
+        ui = user_input or ""
+        ui_l = ui.lower()
+        results_query = "summary"
+        if any(t in ui_l for t in ["full", "all", "detailed", "complete"]):
+            results_query = "full"
+        elif any(t in ui_l for t in ["overview", "status", "state", "health", "show", "list"]):
+            results_query = "overview"
+
+        reset_actions = r"(reset|re-?image|re-?install|re-?provision|wipe|factory\s*reset|revert|restore)"
+        cmd_verbs = r"(give me|provide|generate|produce|write|create|output)"
+        cmd_nouns = r"(cmsh|commands?)"
+        reset_regex = re.compile(rf"{reset_actions}", re.I)
+        generate_cmds_regex = re.compile(rf"({cmd_verbs}).*({cmd_nouns})|({cmd_nouns}).*({cmd_verbs})", re.I)
+
+        if reset_regex.search(ui):
+            action = "reset_network"
+        elif generate_cmds_regex.search(ui):
+            action = "generate_network_commands"
+        else:
+            action = "diagnostics_only"
+
+        nodes = _net_extract_requested_nodes(ui)
+        return action, results_query, nodes
+
+    async def analyze(state: State):
+        action, results_query, nodes = classify(state.get("input", ""))
+        analysis = "### Reasoning\n" + "\n".join([
+            f"- Detected action_type: {action}",
+            f"- Results query: {results_query}",
+            f"- Requested nodes: {', '.join(nodes) if nodes else 'none'}",
+        ])
+        return {
+            **state,
+            "action_type": action,
+            "results_query": results_query,
+            "requested_nodes": nodes,
+            "analysis": analysis
+        }
+
+    async def assess(state: State):
+        # Run assessment
+        try:
+            assess_tool = builder.get_function("network_assessment_tool")
+            assess_out = await asyncio.wait_for(assess_tool.ainvoke("Run comprehensive network assessment"),
+                                                timeout=300)
+        except Exception as e:
+            assess_out = f"❌ Network assessment error: {e}"
+        # Read results (latest dir is resolved by reader)
+        results_text = ""
+        try:
+            reader = builder.get_function("network_results_reader")
+            rq = state.get("results_query", "overview") or "overview"
+            results_text = await asyncio.wait_for(reader.ainvoke(rq), timeout=300)
+        except Exception as e:
+            results_text = f"❌ Reading results failed: {e}"
+        return {**state, "assessment": assess_out, "results_text": results_text}
+
+    async def summarize(state: State):
+        # Summarize assessment results
+        try:
+            llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+        except Exception as e:
+            return {**state, "assessment_summary": f"❌ Could not acquire LLM: {e}"}
+        results = _net_truncate(state.get("results_text", ""), 100_000)
+        question = state.get("input", "")
+        chain = summary_prompt | llm | StrOutputParser()
+        rendered = ""
+        if config.include_prompts_in_output:
+            try:
+                try:
+                    rendered = summary_prompt.format(question=question, results=results)
+                except AttributeError:
+                    rendered = summary_prompt.format_prompt(question=question, results=results).to_string()
+            except Exception:
+                rendered = "(failed to render prompt)"
+        try:
+            summary = await asyncio.wait_for(chain.ainvoke({"question": question, "results": results}), timeout=90)
+        except Exception as e:
+            summary = f"❌ Summary unavailable: {e}"
+        return {**state, "assessment_summary": summary, "summary_prompt": rendered}
+
+    async def generate(state: State):
+        # Build context and ask BCM RAG/LLM for commands
+        try:
+            llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+        except Exception as e:
+            return {**state, "bcm_commands": f"❌ Could not acquire LLM: {e}"}
+        # Desired config from YAML
+        desired = ""
+        try:
+            extractor = builder.get_function("network_config_extractor")
+            desired = await asyncio.wait_for(extractor.ainvoke("extract network configuration"), timeout=60)
+        except Exception as e:
+            desired = f"(desired config unavailable: {e})"
+        # Optional BCM docs RAG (kept simple; returns plain text guidance)
+        bcm_docs = ""
+        try:
+            bcm_rag = builder.get_function("bcm_documentation_rag")
+            bcm_docs = await asyncio.wait_for(
+                bcm_rag.ainvoke("Networking reset/remediation commands (cmsh) cheat sheet."), timeout=60)
+        except Exception:
+            bcm_docs = ""
+
+        allowed_nodes = state.get("requested_nodes", [])
+        allowed_nodes_str = ", ".join(allowed_nodes) if allowed_nodes else "(not specified)"
+        context = ("USER_REQUEST:\n" + (state.get("input", "") or "") + "\n\n" + "ACTION_TYPE:\n" +
+                   (state.get("action_type", "") or "") + "\n\n" + "ALLOWED_NODES:\n" + allowed_nodes_str + "\n\n" +
+                   "ASSESSMENT:\n" + (state.get("assessment", "") or "") + "\n\n" + "RESULTS (parsed):\n" +
+                   (state.get("results_text", "") or "") + "\n\n" + "DESIRED CONFIG (YAML facts):\n" + (desired or "") +
+                   "\n\n" + "BCM DOCS (RAG):\n" + (bcm_docs or ""))
+
+        chain = commands_prompt | llm | StrOutputParser()
+        try:
+            llm_out = await asyncio.wait_for(chain.ainvoke({"context": context}), timeout=90)
+        except Exception as e:
+            llm_out = f"[Error generating commands: {e}]"
+
+        # Extract rationale
+        m = re.search(r"Rationale:\s*(.+?)(?:\n\s*Commands:|\Z)", llm_out, flags=re.S | re.I)
+        rationale = m.group(1).strip() if m else ""
+
+        # Extract and filter commands
+        extracted = _net_extract_cmsh_commands(llm_out)
+        filtered = _net_filter_placeholders(extracted)
+
+        if state.get("action_type") == "reset_network" and allowed_nodes:
+            # Soft coverage nudge: warn if no commands for some requested nodes
+            present = set()
+            for c in filtered:
+                match = re.search(r'device use\s+(\S+)', c)
+                if match:
+                    present.add(match.group(1))
+            missing = [n for n in allowed_nodes if n not in present]
+            if missing:
+                rationale += ("\n- Warning: No commands generated for requested nodes: " + ", ".join(missing))
+
+        return {
+            **state,
+            "bcm_commands": "\n".join(filtered) if filtered else "❌ No valid cmsh commands extracted.",
+            "bcm_rationale": rationale,
+            "llm_cmds_raw": llm_out
+        }
+
+    async def execute(state: State):
+        try:
+            executor = builder.get_function(config.executor_fn)
+        except Exception:
+            return {**state, "execution_result": "No executor configured; skipping execution."}
+        cmds = state.get("bcm_commands", "") or ""
+        if not cmds.strip() or not all(line.strip().startswith('cmsh -c "') for line in cmds.splitlines()):
+            return {**state, "execution_result": "❌ No executable cmsh commands. Skipping execution."}
+        try:
+            out = await asyncio.wait_for(executor.ainvoke(cmds), timeout=600)
+        except Exception as e:
+            out = f"❌ Execution error: {e}"
+        return {**state, "execution_result": out}
+
+    async def synthesize(state: State):
+        sections = ["# Network Orchestration\n"]
+        if state.get("analysis"):
+            sections.append("## Reasoning and Decision\n" + state.get("analysis", "") + "\n")
+        if config.include_llm_rationale and state.get("bcm_rationale"):
+            sections.append("## Command Rationale\n" + state.get("bcm_rationale", "") + "\n")
+        if state.get("bcm_commands"):
+            sections.append("## Generated BCM Commands\n" + state.get("bcm_commands", "") + "\n")
+        if state.get("execution_result"):
+            sections.append("## Execution Result\n" + state.get("execution_result", "") + "\n")
+        if config.include_prompts_in_output and state.get("llm_cmds_raw"):
+            sections.append("## LLM Prompts/Responses (Debug)\n" + _net_truncate(state.get("llm_cmds_raw", ""), 3000) +
+                            "\n")
+        return {**state, "final_output": "\n".join(sections)}
+
+    async def synthesize_diag(state: State):
+        sections = ["# Network Orchestration (Diagnostics Only)\n"]
+        if state.get("analysis"):
+            sections.append("## Reasoning and Decision\n" + state.get("analysis", "") + "\n")
+        if state.get("assessment_summary"):
+            sections.append("## Assessment Summary\n" + state.get("assessment_summary", "") + "\n")
+        if config.include_prompts_in_output and state.get("summary_prompt"):
+            sections.append("## LLM Prompts/Responses (Debug)\n" +
+                            _net_truncate(state.get("summary_prompt", ""), 1200) + "\n")
+        return {**state, "final_output": "\n".join(sections)}
+
+    def route_after_analyze(state: State):
+        return "assess"
+
+    def route_after_assess(state: State):
+        act = state.get("action_type", "diagnostics_only")
+        return "generate" if act in ("generate_network_commands", "reset_network") else "summarize"
+
+    # Build graph
+    graph = StateGraph(State)
+    graph.add_node("analyze", analyze)
+    graph.add_node("assess", assess)
+    graph.add_node("summarize", summarize)
+    graph.add_node("generate", generate)
+    graph.add_node("execute", execute)
+    graph.add_node("synthesize", synthesize)
+    graph.add_node("synthesize_diag", synthesize_diag)
+
+    graph.set_entry_point("analyze")
+    graph.add_conditional_edges("analyze", route_after_analyze, {"assess": "assess"})
+    graph.add_conditional_edges("assess", route_after_assess, {"generate": "generate", "summarize": "summarize"})
+    graph.add_edge("generate", "execute")
+    graph.add_edge("execute", "synthesize")
+    graph.add_edge("summarize", "synthesize_diag")
+    graph.add_edge("synthesize", END)
+    graph.add_edge("synthesize_diag", END)
+
+    app = graph.compile()
+
+    async def _run(input_text: str) -> str:
+        state: State = {"input": input_text}
+        result = await app.ainvoke(state)
+        return result.get("final_output", "❌ Network orchestrator produced no output")
+
+    yield FunctionInfo.from_fn(
+        _run,
+        description=("Analyze cluster networking, decide diagnostics vs reset, generate BCM cmsh commands, "
+                     "execute with approval, and return reasoning/results."))
+
+
+print("✅ LangGraph Network Orchestrator registered successfully")
+
 
 # ========================
 # Deterministic Network Orchestrator (no LangGraph)
