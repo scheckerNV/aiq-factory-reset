@@ -1,11 +1,15 @@
 # Sample configuration for LangGraph Network Orchestrator
 # Replace with your actual cluster details and API keys
 
+general:
+  use_uvloop: true
+
 functions:
   # Main LangGraph Network Orchestrator
   network_orchestrator:
-    reasoning_llm_name: "claude-3-5-sonnet"  # or "gpt-4" or any supported LLM
-    executor_fn: "code_execution_with_approval"
+    _type: aiq_dgx_factory_reset/network_orchestrator
+    reasoning_llm_name: reasoning_llm
+    executor_fn: code_execution_with_approval
     include_llm_rationale: true
     include_prompts_in_output: false  # Set to true for debugging
     # Optional: override prompts
@@ -14,22 +18,26 @@ functions:
 
   # Network Assessment Tool (required dependency)
   network_assessment_tool:
-    cluster_host: "your-cluster-headnode"  # Replace with your cluster IP/hostname
-    cluster_user: "hpcuser1"  # Replace with your SSH username
+    _type: aiq_dgx_factory_reset/network_assessment_tool
+    cluster_host: "localhost"  # Replace with your cluster IP/hostname
+    cluster_user: "root"  # Replace with your SSH username
     timeout: 300
 
   # Network Results Reader (required dependency)
   network_results_reader:
-    cluster_host: "your-cluster-headnode"  # Same as assessment tool
-    cluster_user: "hpcuser1"  # Same as assessment tool
+    _type: aiq_dgx_factory_reset/network_results_reader
+    cluster_host: "localhost"  # Same as assessment tool
+    cluster_user: "root"  # Same as assessment tool
     results_directory: "/tmp/network_assessment_*"  # Where assessment saves results
 
   # Network Config Extractor (required dependency)  
   network_config_extractor:
+    _type: aiq_dgx_factory_reset/network_config_extractor
     networking_docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert"
 
   # BCM Documentation RAG (required dependency)
   bcm_documentation_rag:
+    _type: aiq_dgx_factory_reset/bcm_documentation_rag
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
     persist_dir: "examples/factory_reset/storage/bcm_index"
     similarity_top_k: 5
@@ -39,19 +47,33 @@ functions:
 
   # Code Execution with Approval (required dependency)
   code_execution_with_approval:
-    cluster_host: "your-cluster-headnode"  # Same as network tools
-    cluster_user: "hpcuser1"  # Same as network tools
+    _type: aiq_dgx_factory_reset/code_execution_with_approval
+    cluster_host: "localhost"  # Same as network tools
+    cluster_user: "root"  # Same as network tools
     timeout: 600
     dry_run: true  # Set to false for live execution (DANGEROUS!)
-    coder_llm_name: "claude-3-5-sonnet"  # Optional: LLM validation of commands
-    hitl_approval_fn: "hitl_code_approval"
+    coder_llm_name: reasoning_llm  # Optional: LLM validation of commands
+    hitl_approval_fn: hitl_code_approval
 
   # Human-in-the-Loop Approval (required by code_execution_with_approval)
   hitl_code_approval:
+    _type: aiq_dgx_factory_reset/hitl_code_approval
     prompt: "⚠️ NETWORK FACTORY RESET ⚠️\n\nPlease review the following BCM networking commands carefully:"
 
+llms:
+  reasoning_llm:
+    _type: nim
+    model_name: meta/llama-3.1-70b-instruct
+    max_tokens: 4096
+    temperature: 0.1
+
 # Set your main workflow to use the new orchestrator
-workflow: network_orchestrator
+workflow:
+  _type: aiq_dgx_factory_reset/network_orchestrator
+  reasoning_llm_name: reasoning_llm
+  executor_fn: code_execution_with_approval
+  include_llm_rationale: true
+  include_prompts_in_output: false
 
 # Environment variables you need to set:
 # export NVIDIA_API_KEY="your-nvidia-api-key"
