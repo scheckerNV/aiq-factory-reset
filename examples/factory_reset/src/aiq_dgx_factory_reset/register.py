@@ -173,7 +173,7 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             response = query_engine.query(query)
 
             # Format the response with source information
-            result = "🤖 **BCM Documentation Expert**\n\n"
+            result = "**BCM Documentation Expert**\n\n"
             result += f"**Query:** {query}\n\n"
             result += f"**Answer:**\n{str(response)}\n\n"
 
@@ -201,7 +201,7 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                     if snippet:
                         result += f"{i}. {source}: {snippet}…\n"
 
-            result += "📋 **Source:** BCM Administration Manual\n\n"
+            result += "**Source:** BCM Administration Manual\n\n"
             result += "⚠️  **Note:** Please verify commands in your specific BCM environment before execution."
 
             return result
@@ -217,245 +217,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
 
 
 print("✅ BCM Documentation RAG function registered successfully")
-
-# ========================
-# Generic Documentation RAG Tool
-# ========================
-
-
-class DocumentationRAGConfig(FunctionBaseConfig, name="documentation_rag"):
-    docs_path: str = Field(description="Path to documentation directory")
-    persist_dir: str = Field(description="Directory to persist the vector index")
-    similarity_top_k: int = Field(default=5, description="Number of top similar chunks to retrieve")
-    response_mode: str = Field(default="tree_summarize", description="Response synthesis mode")
-    expert_type: str = Field(default="Documentation", description="Type of expert (e.g., 'Networking', 'BCM')")
-
-    llama_cloud_api_key: str = Field(default="", description="LlamaCloud API key (or set LLAMA_CLOUD_API_KEY env var)")
-    nvidia_api_key: str = Field(default="", description="NVIDIA API key (or set NVIDIA_API_KEY env var)")
-
-
-@register_function(config_type=DocumentationRAGConfig)
-async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
-    """
-    Search documentation using accurate RAG retrieval (supports PDF, Markdown, YAML, and text files)
-    """
-
-    async def _search_docs(query: str) -> str:
-        """Search documentation with high-accuracy retrieval"""
-        docs_path = config.docs_path
-        persist_dir = config.persist_dir
-
-        if not os.path.exists(docs_path):
-            return f"❌ Documentation not found at {docs_path}"
-
-        try:
-            # Import LlamaIndex dependencies
-            import yaml
-            from llama_index.core import Document
-            from llama_index.core import Settings
-            from llama_index.core import StorageContext
-            from llama_index.core import VectorStoreIndex
-            from llama_index.core import load_index_from_storage
-            from llama_index.embeddings.nvidia import NVIDIAEmbedding
-            from llama_index.llms.nvidia import NVIDIA
-
-            # from llama_parse import LlamaParse  # Not currently used
-            # Set up API keys
-            nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
-            llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
-
-            if not nvidia_api_key:
-                return ("❌ NVIDIA API key not provided. Set NVIDIA_API_KEY "
-                        "environment variable or provide in config.")
-
-            os.environ["NVIDIA_API_KEY"] = nvidia_api_key
-
-            # Configure LlamaIndex with NVIDIA models for accuracy
-            Settings.llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
-            Settings.embed_model = NVIDIAEmbedding(model="nvidia/llama-3.2-nv-embedqa-1b-v2", truncate="END")
-            # Enable debug/tracing so reasoning signals are visible in logs (optional)
-            try:
-                from llama_index.core.callbacks import CallbackManager
-                from llama_index.core.callbacks import LlamaDebugHandler
-                from llama_index.core.callbacks import TokenCountingHandler
-                Settings.callback_manager = CallbackManager(
-                    [LlamaDebugHandler(print_trace_on_end=True), TokenCountingHandler()])
-            except Exception:
-                pass
-
-            logger.info("Processing documentation from %s", docs_path)
-
-            # Check for existing index
-            docstore_path = os.path.join(persist_dir, "docstore.json")
-            if os.path.exists(docstore_path):
-                logger.info("Loading existing documentation index...")
-                storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
-                index = load_index_from_storage(storage_context)
-            else:
-                logger.info("Creating new documentation index...")
-                os.makedirs(persist_dir, exist_ok=True)
-
-                documents = []
-                docs_path_obj = Path(docs_path)
-
-                # # Process PDF files with LlamaParse if LlamaCloud API key is available
-                # if llama_api_key:
-                #     os.environ["LLAMA_CLOUD_API_KEY"] = llama_api_key
-                #     pdf_files = list(docs_path_obj.glob("*.pdf"))
-                #     if pdf_files:
-                #         logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
-                #         parser = LlamaParse(verbose=True)
-                #         for pdf_file in pdf_files:
-                #             try:
-                #                 pdf_docs = parser.load_data(str(pdf_file))
-                #                 for doc in pdf_docs:
-                #                     doc.metadata["source"] = str(pdf_file)
-                #                     doc.metadata["file_name"] = pdf_file.name
-                #                 documents.extend(pdf_docs)
-                #                 logger.info("Successfully processed %s", pdf_file.name)
-                #             except Exception as e:
-                #                 logger.warning("Failed to parse %s: %s", pdf_file, e)
-
-                pdf_files = list(docs_path_obj.glob("*.pdf"))
-                # if pdf_files:
-                #     logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
-                #     # new code
-                #     parser = LlamaParse(verbose=True)
-                #     for pdf_file in pdf_files:
-                #         try:
-                #             logger.info("Processing %s individually...", pdf_file.name)
-
-                #             # Create a fresh parser instance for each file
-                #             file_parser = LlamaParse(verbose=True)
-                #             pdf_docs = file_parser.load_data(str(pdf_file))
-
-                #             for doc in pdf_docs:
-                #                 doc.metadata["source"] = str(pdf_file)
-                #                 doc.metadata["file_name"] = pdf_file.name
-
-                #             documents.extend(pdf_docs)
-                #             logger.info("Successfully processed %s (%d documents)", pdf_file.name, len(pdf_docs))
-
-                #             # Clean up
-                #             del file_parser
-
-                #         except Exception as e:
-                #             logger.warning("Failed to parse %s: %s", pdf_file, e)
-                #             # Add fallback here if needed
-                # Process YAML files
-                yaml_files = list(docs_path_obj.glob("*.yaml")) + list(docs_path_obj.glob("*.yml"))
-                if yaml_files:
-                    logger.info("Found %d YAML files...", len(yaml_files))
-                    for yaml_file in yaml_files:
-                        try:
-                            with open(yaml_file, 'r', encoding='utf-8') as f:
-                                content = f.read()
-
-                            # Also parse as YAML to extract structured info for metadata
-                            try:
-                                yaml_data = yaml.safe_load(content)
-                                metadata = {"source": str(yaml_file), "file_name": yaml_file.name, "file_type": "yaml"}
-                                # Add some structured metadata if available
-                                if isinstance(yaml_data, dict):
-                                    if "metadata" in yaml_data:
-                                        metadata.update(yaml_data["metadata"])
-                                    if "cluster" in yaml_data:
-                                        metadata["cluster_name"] = yaml_data.get("cluster", {}).get("name", "unknown")
-                            except Exception:
-                                metadata = {"source": str(yaml_file), "file_name": yaml_file.name, "file_type": "yaml"}
-
-                            documents.append(Document(text=content, metadata=metadata))
-                            logger.info("Processed %s", yaml_file.name)
-                        except Exception as e:
-                            logger.warning("Failed to load %s: %s", yaml_file, e)
-
-                # Process markdown files
-                md_files = list(docs_path_obj.glob("*.md"))
-                if md_files:
-                    logger.info("Found %d markdown files...", len(md_files))
-                    for md_file in md_files:
-                        try:
-                            with open(md_file, 'r', encoding='utf-8') as f:
-                                content = f.read()
-                            documents.append(
-                                Document(text=content,
-                                         metadata={
-                                             "source": str(md_file), "file_name": md_file.name, "file_type": "markdown"
-                                         }))
-                            logger.info("Processed %s", md_file.name)
-                        except Exception as e:
-                            logger.warning("Failed to load %s: %s", md_file, e)
-
-                # Process text files
-                txt_files = list(docs_path_obj.glob("*.txt"))
-                if txt_files:
-                    logger.info("Found %d text files...", len(txt_files))
-                    for txt_file in txt_files:
-                        try:
-                            with open(txt_file, 'r', encoding='utf-8') as f:
-                                content = f.read()
-                            documents.append(
-                                Document(text=content,
-                                         metadata={
-                                             "source": str(txt_file), "file_name": txt_file.name, "file_type": "text"
-                                         }))
-                            logger.info("Processed %s", txt_file.name)
-                        except Exception as e:
-                            logger.warning("Failed to load %s: %s", txt_file, e)
-
-                if not documents:
-                    return f"❌ No documentation files found in {docs_path}"
-
-                logger.info("Creating index from %d documents...", len(documents))
-                index = VectorStoreIndex.from_documents(documents)
-                index.storage_context.persist(persist_dir=persist_dir)
-                logger.info("Index created and persisted successfully")
-
-            query_engine = index.as_query_engine(similarity_top_k=config.similarity_top_k,
-                                                 response_mode=config.response_mode,
-                                                 verbose=True)
-
-            logger.info("Executing query: %s", query)
-            response = query_engine.query(query)
-
-            result = f"🤖 **{config.expert_type} Documentation Expert**\n\n"
-            result += f"**Query:** {query}\n\n"
-            result += f"**Answer:**\n{str(response)}\n\n"
-
-            if hasattr(response, 'source_nodes') and response.source_nodes:
-                result += "**Sources:**\n"
-                for i, node in enumerate(response.source_nodes[:3], 1):
-                    file_name = node.metadata.get('file_name', 'Unknown')
-                    result += f"{i}. {file_name} (Score: {node.score:.3f})\n"
-                result += "\n"
-                result += "**Top retrieved context (snippets):**\n"
-                for i, node in enumerate(response.source_nodes[:3], 1):
-                    source = node.metadata.get('file_name', 'Unknown')
-                    text = getattr(node, 'text', '') or getattr(node, 'node', getattr(node, 'document', None))
-                    snippet = ''
-                    if isinstance(text, str):
-                        snippet = text.strip().replace("\n", " ")[:500]
-                    elif hasattr(node, 'get_text'):
-                        try:
-                            snippet = node.get_text().strip().replace("\n", " ")[:500]
-                        except Exception:
-                            snippet = ''
-                    if snippet:
-                        result += f"{i}. {source}: {snippet}…\n"
-
-            return result
-
-        except Exception as e:
-            logger.error("Error in documentation search: %s", str(e))
-            return (f"❌ Error in {config.expert_type} analysis: {str(e)}\n\n"
-                    f"Please check your API keys and network connection.")
-
-    yield FunctionInfo.from_fn(_search_docs,
-                               description=(f"STEP 1: Analyze {config.expert_type} desired state configuration "
-                                            f"and requirements. Call this FIRST before any BCM operations."))
-
-
-print("✅ Generic Documentation RAG function registered successfully")
 
 # ========================
 # Networking Expert RAG Tool
@@ -635,7 +396,7 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
             response = query_engine.query(query)
 
             # Format the response with source information
-            result = "🤖 **Networking Documentation Expert**\n\n"
+            result = "**Networking Documentation Expert**\n\n"
             result += f"**Query:** {query}\n\n"
             result += f"**Answer:**\n{str(response)}\n\n"
 
@@ -757,7 +518,7 @@ async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder:
                 location = "locally" if config.cluster_host == "localhost" else "on cluster"
                 return f"""✅ Network assessment completed successfully!
 
-📋 Assessment Output:
+Assessment Output:
 {stdout.decode('utf-8')}
 
 📁 Results saved {location} in timestamped directory.
@@ -958,7 +719,7 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
                     return f"No network config YAML found in {networking_docs_path}/"
                 config_file = config_files[0]
 
-            logger.info(f"📋 Reading network config from: {config_file}")
+            logger.info(f"Reading network config from: {config_file}")
 
             with open(config_file, 'r') as f:
                 config_data = yaml.safe_load(f)
@@ -1029,7 +790,7 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
                 facts.append("WARNING: No network configuration found in YAML")
 
             result = '\n'.join(facts)
-            logger.info(f"📋 Extracted {len(facts)} configuration facts from YAML")
+            logger.info(f"Extracted {len(facts)} configuration facts from YAML")
             return result
 
         except Exception as e:
@@ -1363,7 +1124,16 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
         return action, results_query, nodes
 
     async def analyze(state: State):
-        action, results_query, nodes = classify(state.get("input", ""))
+        user_input = state.get("input", "")
+        logger.info("analyze: Starting regex-based classification for input: %s", user_input[:100])
+
+        action, results_query, nodes = classify(user_input)
+
+        logger.info("✅ analyze: Classification completed - action_type=%s, results_query=%s, nodes=%s",
+                    action,
+                    results_query,
+                    nodes)
+
         analysis = "### Reasoning\n" + "\n".join([
             f"- Detected action_type: {action}",
             f"- Results query: {results_query}",
@@ -1378,12 +1148,17 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
         }
 
     async def assess(state: State):
+        logger.info("assess: Starting network assessment")
+
         # Run assessment
         try:
             assess_tool = builder.get_function("network_assessment_tool")
+            logger.info("assess: Executing network_assessment_tool")
             assess_out = await asyncio.wait_for(assess_tool.ainvoke("Run comprehensive network assessment"),
                                                 timeout=300)
+            logger.info("✅ assess: Network assessment completed successfully")
         except Exception as e:
+            logger.error("❌ assess: Network assessment failed: %s", e)
             assess_out = f"❌ Network assessment error: {e}"
 
         # Extract results directory from assessment output
@@ -1392,7 +1167,9 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             m = re.search(r"(/tmp/network_assessment_[0-9_]+)", assess_out)
             if m:
                 results_dir = m.group(1)
-                logger.info(f"Extracted results directory: {results_dir}")
+                logger.info("📁 assess: Extracted results directory: %s", results_dir)
+            else:
+                logger.warning("⚠️ assess: Could not extract results directory from assessment output")
 
         # Read results with explicit directory if available
         results_text = ""
@@ -1401,20 +1178,32 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             rq = state.get("results_query", "overview") or "overview"
             # Include directory in query if we found one
             rq_with_dir = f"{rq} {results_dir}" if results_dir else rq
+            if results_dir:
+                logger.info("assess: Reading results with query '%s' from directory %s", rq, results_dir)
+            else:
+                logger.info("assess: Reading results with query '%s' (no specific directory)", rq)
             results_text = await asyncio.wait_for(reader.ainvoke(rq_with_dir), timeout=300)
+            logger.info("✅ assess: Results reading completed successfully")
         except Exception as e:
+            logger.error("❌ assess: Reading results failed: %s", e)
             results_text = f"❌ Reading results failed: {e}"
 
         return {**state, "assessment": assess_out, "results_text": results_text, "results_dir": results_dir}
 
     async def summarize(state: State):
+        logger.info("summarize: Starting LLM-based assessment summarization")
+
         # Summarize assessment results
         try:
             llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+            logger.info("✅ summarize: LLM acquired successfully")
         except Exception as e:
+            logger.error("❌ summarize: Could not acquire LLM: %s", e)
             return {**state, "assessment_summary": f"❌ Could not acquire LLM: {e}"}
         results = _net_truncate(state.get("results_text", ""), 100_000)
         question = state.get("input", "")
+        logger.info("summarize: Processing %d chars of assessment data", len(results))
+
         chain = summary_prompt | llm | StrOutputParser()
         rendered = ""
         if config.include_prompts_in_output:
@@ -1426,35 +1215,52 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             except Exception:
                 rendered = "(failed to render prompt)"
         try:
+            logger.info("summarize: Invoking LLM for assessment summary")
             summary = await asyncio.wait_for(chain.ainvoke({"question": question, "results": results}), timeout=90)
+            logger.info("✅ summarize: LLM summary completed successfully")
         except Exception as e:
+            logger.error("❌ summarize: LLM summary failed: %s", e)
             summary = f"❌ Summary unavailable: {e}"
         return {**state, "assessment_summary": summary, "summary_prompt": rendered}
 
     async def generate(state: State):
+        logger.info("generate: Starting BCM command generation")
+
         # Build context and ask BCM RAG/LLM for commands
         try:
             llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+            logger.info("✅ generate: LLM acquired successfully")
         except Exception as e:
+            logger.error("❌ generate: Could not acquire LLM: %s", e)
             return {**state, "bcm_commands": f"❌ Could not acquire LLM: {e}"}
+
         # Desired config from YAML
+        logger.info("generate: Extracting desired configuration")
         desired = ""
         try:
             extractor = builder.get_function("network_config_extractor")
             desired = await asyncio.wait_for(extractor.ainvoke("extract network configuration"), timeout=60)
+            logger.info("✅ generate: Desired config extracted successfully")
         except Exception as e:
+            logger.warning("generate: Desired config extraction failed: %s", e)
             desired = f"(desired config unavailable: {e})"
+
         # Optional BCM docs RAG (kept simple; returns plain text guidance)
+        logger.info("generate: Querying BCM documentation RAG")
         bcm_docs = ""
         try:
             bcm_rag = builder.get_function("bcm_documentation_rag")
             bcm_docs = await asyncio.wait_for(
                 bcm_rag.ainvoke("Networking reset/remediation commands (cmsh) cheat sheet."), timeout=60)
-        except Exception:
+            logger.info("✅ generate: BCM docs RAG completed successfully")
+        except Exception as e:
+            logger.warning("generate: BCM docs RAG failed: %s", e)
             bcm_docs = ""
 
         allowed_nodes = state.get("requested_nodes", [])
         allowed_nodes_str = ", ".join(allowed_nodes) if allowed_nodes else "(not specified)"
+        logger.info("generate: Target nodes: %s", allowed_nodes_str)
+
         context = ("USER_REQUEST:\n" + (state.get("input", "") or "") + "\n\n" + "ACTION_TYPE:\n" +
                    (state.get("action_type", "") or "") + "\n\n" + "ALLOWED_NODES:\n" + allowed_nodes_str + "\n\n" +
                    "ASSESSMENT:\n" + (state.get("assessment", "") or "") + "\n\n" + "RESULTS (parsed):\n" +
@@ -1463,17 +1269,22 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
 
         chain = commands_prompt | llm | StrOutputParser()
         try:
+            logger.info("generate: Invoking LLM for command generation")
             llm_out = await asyncio.wait_for(chain.ainvoke({"context": context}), timeout=90)
+            logger.info("✅ generate: LLM command generation completed")
         except Exception as e:
+            logger.error("❌ generate: LLM command generation failed: %s", e)
             llm_out = f"[Error generating commands: {e}]"
 
         # Extract rationale
         m = re.search(r"Rationale:\s*(.+?)(?:\n\s*Commands:|\Z)", llm_out, flags=re.S | re.I)
         rationale = m.group(1).strip() if m else ""
+        logger.info("generate: Extracted rationale: %s chars", len(rationale))
 
         # Extract and filter commands
         extracted = _net_extract_cmsh_commands(llm_out)
         filtered = _net_filter_placeholders(extracted)
+        logger.info("generate: Extracted %d commands, filtered to %d valid commands", len(extracted), len(filtered))
 
         if state.get("action_type") == "reset_network" and allowed_nodes:
             # Soft coverage nudge: warn if no commands for some requested nodes
@@ -1484,7 +1295,10 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
                     present.add(match.group(1))
             missing = [n for n in allowed_nodes if n not in present]
             if missing:
+                logger.warning("generate: Missing commands for nodes: %s", missing)
                 rationale += ("\n- Warning: No commands generated for requested nodes: " + ", ".join(missing))
+            else:
+                logger.info("✅ generate: All requested nodes covered in generated commands")
 
         return {
             **state,
@@ -1494,16 +1308,29 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
         }
 
     async def execute(state: State):
+        logger.info("execute: Starting command execution phase")
+
         try:
             executor = builder.get_function(config.executor_fn)
-        except Exception:
+            logger.info("✅ execute: Executor function '%s' acquired successfully", config.executor_fn)
+        except Exception as e:
+            logger.warning("execute: No executor configured, skipping execution: %s", e)
             return {**state, "execution_result": "No executor configured; skipping execution."}
+
         cmds = state.get("bcm_commands", "") or ""
-        if not cmds.strip() or not all(line.strip().startswith('cmsh -c "') for line in cmds.splitlines()):
+        cmd_lines = cmds.splitlines() if cmds.strip() else []
+        logger.info("execute: Validating %d command lines", len(cmd_lines))
+
+        if not cmds.strip() or not all(line.strip().startswith('cmsh -c "') for line in cmd_lines):
+            logger.warning("❌ execute: No valid executable cmsh commands found")
             return {**state, "execution_result": "❌ No executable cmsh commands. Skipping execution."}
+
+        logger.info("execute: Invoking executor with %d commands (timeout: 600s)", len(cmd_lines))
         try:
             out = await asyncio.wait_for(executor.ainvoke(cmds), timeout=600)
+            logger.info("✅ execute: Command execution completed successfully")
         except Exception as e:
+            logger.error("❌ execute: Command execution failed: %s", e)
             out = f"❌ Execution error: {e}"
         return {**state, "execution_result": out}
 
