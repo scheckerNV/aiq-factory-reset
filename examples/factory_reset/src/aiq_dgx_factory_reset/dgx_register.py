@@ -631,6 +631,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         bcm_rationale: str
         llm_cmds_raw: str
         summary_prompt: str
+        assessment_summary: str
 
     async def assess_node(state: OrchestratorState):
         logger.info("assess_node: Starting node assessment...")
@@ -892,7 +893,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             logger.error("❌ summarize_results: LLM error: %s", str(e))
             summary = f"❌ Summary unavailable (LLM error): {e}"
 
-        return {**state, "analysis": summary, "summary_prompt": rendered_prompt}
+        return {**state, "assessment_summary": summary, "summary_prompt": rendered_prompt}
 
     # ReAct agent removed in minimal workflow
 
@@ -1035,16 +1036,22 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         """Synthesize results for diagnostics-only requests (no command generation/execution)"""
         logger.info("synthesize_diagnostics_only: Starting synthesis...")
 
-        # Get the LLM-generated summary from the analysis
-        llm_summary = state.get("analysis", "") or ""
-        results_dir = state.get("results_dir", "N/A")
-
         # Build sections conditionally
-        sections = [
-            "# DGX Orchestration (Diagnostics Only)\n",
-            "## Assessment Summary\n" + llm_summary + "\n",
-            "## Notes\n" + f"Results directory: {results_dir}\n" + "No BCM commands were generated or executed.\n"
-        ]
+        sections = ["# DGX Orchestration (Diagnostics Only)\n"]
+
+        # Show reasoning from analyze_and_decide
+        if state.get("analysis"):
+            sections.append("## Reasoning and Decision\n" + state.get("analysis", "") + "\n")
+
+        # Show LLM-generated summary from summarize_results
+        llm_summary = state.get("assessment_summary", "") or ""
+        if llm_summary:
+            sections.append("## Assessment Summary\n" + llm_summary + "\n")
+
+        # Notes section
+        results_dir = state.get("results_dir", "N/A")
+        sections.append("## Notes\n" + f"Results directory: {results_dir}\n" +
+                        "No BCM commands were generated or executed.\n")
 
         # Debug section for prompts (mirror the main synthesize function)
         if config.include_prompts_in_output:
