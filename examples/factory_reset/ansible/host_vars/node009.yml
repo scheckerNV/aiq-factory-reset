@@ -1,0 +1,15 @@
+nmstate_desired:
+  interfaces:
+  - name: ens3
+    type: ethernet
+    state: up
+    mtu: 1500
+    ipv4:
+      enabled: true
+      address:
+      - ip: 10.141.0.9
+        prefix-length: 16
+      gateway: 10.141.255.254
+      dns:
+      - 127.0.0.53
+      - 192.168.200.254

@@ -1400,3 +1400,310 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
 
 
 print("✅ LangGraph Network Orchestrator registered successfully")
+
+# ========================
+# Network Ansible Plan Tool
+# ========================
+
+
+class NetworkAnsiblePlanConfig(FunctionBaseConfig, name="network_ansible_plan"):
+    """Configuration for Ansible planning tool"""
+    reasoning_llm_name: str = Field(description="LLM used for planning")
+    allowed_tags: list[str] | None = Field(default=None, description="Optional allowlist of tags")
+    required_tags: list[str] | None = Field(default=None, description="Tags always included (e.g., connectivity_check)")
+    default_checkpoint_timeout: int = Field(default=120, description="Default nmstate checkpoint timeout seconds")
+
+
+@register_function(config_type=NetworkAnsiblePlanConfig, framework_wrappers=[LLMFrameworkEnum.LANGCHAIN])
+async def network_ansible_plan(config: NetworkAnsiblePlanConfig, builder: Builder):
+    """Plan Ansible tags and target nodes based on assessment and golden state"""
+
+    import json
+
+    from langchain_core.output_parsers import StrOutputParser
+    from langchain_core.prompts import PromptTemplate
+
+    async def _plan(input_payload: str) -> str:
+        """Generate Ansible execution plan with tags and nodes"""
+        # Gather context from other tools
+        try:
+            extractor = builder.get_function("network_config_extractor")
+            golden_facts = await asyncio.wait_for(extractor.ainvoke("extract network configuration"), timeout=60)
+            logger.info("✅ Retrieved golden state facts")
+        except Exception as e:
+            logger.warning("⚠️ Golden facts unavailable: %s", e)
+            golden_facts = "(golden facts unavailable)"
+
+        try:
+            reader = builder.get_function("network_results_reader")
+            assessment_text = await asyncio.wait_for(reader.ainvoke("full"), timeout=120)
+            logger.info("✅ Retrieved assessment results")
+        except Exception as e:
+            logger.warning("⚠️ Assessment unavailable: %s", e)
+            assessment_text = "(assessment unavailable)"
+
+        # Get allowed nodes from environment (set by orchestrator)
+        allowed_nodes = os.getenv("AIQ_ALLOWED_NODES", "")
+        allowed_nodes_list = [n.strip() for n in allowed_nodes.split(",") if n.strip()]
+
+        # Build planning prompt
+        guardrails = [
+            "Do not touch the SSH/mgmt NIC unless explicitly stated.",
+            "Use nmstate checkpoint with rollback.",
+            "Run safely with serial=1 (playbook enforces).",
+            "Prefer minimal tags needed to remediate drift.",
+            "Focus on interfaces, IP configuration, and connectivity validation."
+        ]
+
+        tag_hint = (f"Allowed tags: {', '.join(config.allowed_tags or [])}"
+                    if config.allowed_tags else "Tags must exist in the reviewed playbook.")
+        req_hint = (f"Always include: {', '.join(config.required_tags or [])}"
+                    if config.required_tags else "Include connectivity_check if changes are planned.")
+
+        prompt_template = PromptTemplate.from_template("""
+You are a BCM networking SRE. Plan an Ansible run by selecting tags and nodes.
+Output STRICT JSON only with keys: tags (list[str]), limit_hosts (list[str]),
+extra_vars (object), rationale (list[str]), notes (list[str]). No markdown.
+
+GUARDRAILS:
+- {guardrails}
+
+{tag_hint}
+{req_hint}
+
+ALLOWED_NODES: {allowed_nodes}
+
+ASSESSMENT:
+{assessment_text}
+
+GOLDEN_FACTS:
+{golden_facts}
+
+Analyze the drift between current state and desired state. Select appropriate tags and target nodes.
+Return only valid JSON with the required structure.
+        """)
+
+        try:
+            llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
+            chain = prompt_template | llm | StrOutputParser()
+
+            logger.info("🤖 Invoking LLM for Ansible planning")
+            raw_response = await asyncio.wait_for(
+                chain.ainvoke({
+                    "guardrails": "\n- ".join(guardrails),
+                    "tag_hint": tag_hint,
+                    "req_hint": req_hint,
+                    "allowed_nodes": ', '.join(allowed_nodes_list) if allowed_nodes_list else '(none specified)',
+                    "assessment_text": assessment_text[:18000],  # Truncate to avoid token limits
+                    "golden_facts": golden_facts[:8000]
+                }),
+                timeout=90)
+
+            # Extract JSON from response
+            def extract_json(text: str) -> dict:
+                if isinstance(text, dict):
+                    return text
+                txt = str(text)
+                start = txt.find("{")
+                end = txt.rfind("}")
+                if start == -1 or end == -1:
+                    raise ValueError("No JSON found in response")
+                return json.loads(txt[start:end + 1])
+
+            data = extract_json(raw_response)
+            logger.info("✅ LLM planning completed successfully")
+
+            # Enforce allow/require lists
+            tags = data.get("tags", [])
+            if config.allowed_tags:
+                original_count = len(tags)
+                tags = [t for t in tags if t in config.allowed_tags]
+                if len(tags) < original_count:
+                    logger.info("Filtered %d disallowed tags", original_count - len(tags))
+
+            if config.required_tags:
+                for t in config.required_tags:
+                    if t not in tags:
+                        tags.append(t)
+                        logger.info("Added required tag: %s", t)
+            data["tags"] = tags
+
+            # Intersect limit_hosts with ALLOWED_NODES
+            limit_hosts = data.get("limit_hosts", [])
+            if allowed_nodes_list:
+                original_hosts = limit_hosts[:]
+                limit_hosts = [h for h in limit_hosts if h in allowed_nodes_list]
+                if len(limit_hosts) < len(original_hosts):
+                    logger.info("Limited hosts to allowed nodes: %s", limit_hosts)
+            data["limit_hosts"] = limit_hosts
+
+            # Ensure extra_vars has defaults
+            extra_vars = data.get("extra_vars", {}) or {}
+            extra_vars.setdefault("nm_checkpoint_timeout", config.default_checkpoint_timeout)
+            data["extra_vars"] = extra_vars
+
+            result_json = json.dumps(data, indent=2)
+            logger.info("📋 Plan generated: %d tags, %d hosts", len(tags), len(limit_hosts))
+            return result_json
+
+        except Exception as e:
+            logger.error("❌ Ansible planning failed: %s", e)
+            # Fallback plan
+            fallback_plan = {
+                "tags": config.required_tags or ["connectivity_check"],
+                "limit_hosts": allowed_nodes_list,
+                "extra_vars": {
+                    "nm_checkpoint_timeout": config.default_checkpoint_timeout
+                },
+                "rationale": [f"Planner error: {str(e)}"],
+                "notes": ["Falling back to safe connectivity check only."]
+            }
+            return json.dumps(fallback_plan, indent=2)
+
+    yield FunctionInfo.from_fn(_plan, description="Plan Ansible tags and target nodes (returns strict JSON)")
+
+
+print("✅ Network Ansible Plan tool registered successfully")
+
+# ========================
+# Ansible Executor Tool
+# ========================
+
+
+class AnsibleExecutorConfig(FunctionBaseConfig, name="ansible_executor"):
+    """Configuration for Ansible execution tool"""
+    inventory_path: str = Field(..., description="Path to static inventory (INI/YAML)")
+    playbook_path: str = Field(..., description="Path to main playbook")
+    ansible_bin: str = Field(default="ansible-playbook", description="ansible-playbook binary")
+    hitl_approval_fn: str = Field(..., description="HITL function name to confirm apply")
+    timeout: int = Field(default=1800, description="Timeout seconds for each run")
+    env_disable_hostkey_check: bool = Field(default=True, description="Set ANSIBLE_HOST_KEY_CHECKING=False")
+
+
+@register_function(config_type=AnsibleExecutorConfig)
+async def ansible_executor(config: AnsibleExecutorConfig, builder: Builder):
+    """Execute Ansible playbooks with check mode and HITL approval"""
+
+    import json
+    import shlex
+
+    async def _run(plan_json: str) -> str:
+        """Execute Ansible plan with check mode followed by apply after approval"""
+        try:
+            plan = json.loads(plan_json)
+            logger.info("📋 Executing Ansible plan with %d tags", len(plan.get("tags", [])))
+        except Exception as e:
+            return f"❌ Invalid planner JSON: {e}"
+
+        tags = plan.get("tags", [])
+        limit_hosts = plan.get("limit_hosts", [])
+        extra_vars = plan.get("extra_vars", {})
+        rationale = plan.get("rationale", [])
+        notes = plan.get("notes", [])
+
+        if not tags:
+            return "❌ No tags specified in plan."
+        if not limit_hosts:
+            return "❌ No hosts to limit; nothing to do."
+
+        tags_arg = ",".join(tags)
+        limit_arg = ",".join(limit_hosts)
+        extra_vars_arg = json.dumps(extra_vars) if extra_vars else "{}"
+
+        # Set up environment
+        env = os.environ.copy()
+        if config.env_disable_hostkey_check:
+            env["ANSIBLE_HOST_KEY_CHECKING"] = "False"
+
+        async def run_cmd(args):
+            """Execute ansible-playbook command"""
+            logger.info("🔧 Running: %s", " ".join(shlex.quote(arg) for arg in args))
+            proc = await asyncio.create_subprocess_exec(*args,
+                                                        stdout=asyncio.subprocess.PIPE,
+                                                        stderr=asyncio.subprocess.PIPE,
+                                                        env=env)
+            try:
+                out, err = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
+                return proc.returncode, out, err
+            except asyncio.TimeoutError:
+                proc.kill()
+                return 124, b"", b"Command timed out"
+
+        # Build base command
+        base_cmd = [
+            config.ansible_bin,
+            "-i",
+            config.inventory_path,
+            config.playbook_path,
+            "--tags",
+            tags_arg,
+            "--limit",
+            limit_arg,
+            "-e",
+            extra_vars_arg,
+        ]
+
+        # Step 1: CHECK MODE
+        logger.info("🔍 Running Ansible in check mode")
+        check_cmd = base_cmd + ["--check", "--diff"]
+        rc_check, out_check, err_check = await run_cmd(check_cmd)
+
+        check_summary = (f"Ansible CHECK mode completed (return code: {rc_check})\n\n"
+                         f"STDOUT:\n{out_check.decode('utf-8', errors='replace')}\n\n"
+                         f"STDERR:\n{err_check.decode('utf-8', errors='replace')}\n")
+
+        # Step 2: Get HITL approval
+        try:
+            approval_fn = builder.get_function(config.hitl_approval_fn)
+            logger.info("👤 Requesting human approval")
+        except Exception as e:
+            return f"❌ HITL approval function '{config.hitl_approval_fn}' not found: {e}"
+
+        approval_prompt = (f"Proposed Ansible execution plan:\n"
+                           f"- Tags: {tags_arg}\n"
+                           f"- Target hosts: {limit_arg}\n"
+                           f"- Extra variables: {extra_vars_arg}\n\n"
+                           f"Rationale:\n- " + "\n- ".join(rationale) + "\n\n"
+                           f"CHECK MODE SUMMARY:\n{check_summary}\n\n"
+                           "Approve execution?")
+
+        approved = await approval_fn.ainvoke(approval_prompt)
+        if not approved:
+            logger.info("❌ Execution cancelled by user")
+            return f"❌ Ansible execution cancelled by user.\n\n{check_summary}"
+
+        # Step 3: APPLY
+        logger.info("⚙️ Running Ansible apply mode")
+        apply_cmd = base_cmd  # No --check flag
+        rc_apply, out_apply, err_apply = await run_cmd(apply_cmd)
+
+        # Format results
+        result = (f"✅ Ansible executor completed.\n\n"
+                  f"**Plan Summary:**\n"
+                  f"- Tags executed: {tags_arg}\n"
+                  f"- Target hosts: {limit_arg}\n"
+                  f"- Extra variables: {extra_vars_arg}\n\n")
+
+        if rationale:
+            result += "**Rationale:**\n- " + "\n- ".join(rationale) + "\n\n"
+        if notes:
+            result += "**Notes:**\n- " + "\n- ".join(notes) + "\n\n"
+
+        result += (f"**CHECK MODE RESULT (rc={rc_check}):**\n"
+                   f"{out_check.decode('utf-8', errors='replace')}\n"
+                   f"{err_check.decode('utf-8', errors='replace')}\n\n"
+                   f"**APPLY RESULT (rc={rc_apply}):**\n"
+                   f"{out_apply.decode('utf-8', errors='replace')}\n"
+                   f"{err_apply.decode('utf-8', errors='replace')}\n")
+
+        if rc_apply == 0:
+            logger.info("✅ Ansible execution completed successfully")
+        else:
+            logger.warning("⚠️ Ansible execution completed with errors (rc=%d)", rc_apply)
+
+        return result
+
+    yield FunctionInfo.from_fn(_run, description="Run ansible-playbook in check mode then apply with HITL approval")
+
+
+print("✅ Ansible Executor tool registered successfully")

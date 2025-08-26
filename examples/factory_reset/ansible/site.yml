@@ -1,0 +1,70 @@
+---
+- name: Network remediation with nmstate (tagged)
+  hosts: compute
+  gather_facts: false
+  any_errors_fatal: true
+  serial: 1
+  vars:
+    nm_checkpoint_timeout: "{{ nm_checkpoint_timeout | default(120) }}"
+  pre_tasks:
+    - name: Gather minimal facts (network only)
+      ansible.builtin.setup:
+        gather_subset:
+          - network
+      tags: [gather_facts_net]
+
+    - name: Show current nmstate (for validation)
+      ansible.builtin.command: nmstatectl show
+      register: current_nmstate
+      changed_when: false
+      tags: [validate_current]
+
+  tasks:
+    - name: Create NetworkManager checkpoint
+      ansible.builtin.command: nmcli general checkpoint {{ nm_checkpoint_timeout }}
+      register: nm_checkpoint
+      changed_when: "'created' in nm_checkpoint.stderr or nm_checkpoint.rc == 0"
+      failed_when: false
+      tags: [rollback_checkpoint, apply_nmstate]
+
+    - name: Apply desired nmstate
+      ansible.posix.nmstate:
+        state: present
+        desired_state: "{{ nmstate_desired }}"
+      register: nm_apply
+      tags: [configure_interfaces, configure_bonds, configure_vlans, apply_nmstate]
+
+    - name: Reload NetworkManager (if needed)
+      ansible.builtin.command: nmcli connection reload
+      when: nm_apply is changed
+      changed_when: false
+      tags: [reload_network]
+
+    - name: Connectivity check - ping gateway
+      ansible.builtin.command: ping -c1 -W1 {{ mgmt_gateway }}
+      register: ping_gw
+      changed_when: false
+      tags: [connectivity_check]
+
+    - name: Connectivity check - DNS query
+      ansible.builtin.command: getent ahosts {{ (dns_servers | first) | default('127.0.0.1') }}
+      register: dns_chk
+      changed_when: false
+      tags: [connectivity_check]
+
+  rescue:
+    - name: Rollback checkpoint on failure
+      ansible.builtin.command: nmcli general rollback
+      ignore_errors: true
+      tags: [rollback_checkpoint]
+
+    - name: Fail play after rollback
+      ansible.builtin.fail:
+        msg: "Network changes failed; checkpoint rolled back."
+
+  always:
+    - name: Show applied nmstate (post)
+      ansible.builtin.command: nmstatectl show
+      register: nmstate_post
+      changed_when: false
+      tags: [validate_current]
