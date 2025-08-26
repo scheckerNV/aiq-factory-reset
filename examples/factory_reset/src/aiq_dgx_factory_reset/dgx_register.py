@@ -451,6 +451,9 @@ class DGXOrchestratorConfig(FunctionBaseConfig, name="dgx_orchestrator"):
     verbose: bool = Field(default=False, description="Enable extra logging")
     commands_prompt: str | None = Field(default=None, description="Override command-gen prompt text")
     commands_prompt_path: str | None = Field(default=None, description="Path to prompt file (optional)")
+    include_llm_rationale: bool = Field(default=True, description="Include LLM rationale in final output")
+    include_prompts_in_output: bool = Field(default=False,
+                                            description="Include rendered prompts in final output (for debugging)")
 
 
 DEFAULT_COMMANDS_PROMPT = """You are a Bright Cluster Manager (BCM) SRE. Using the CONTEXT
@@ -625,6 +628,9 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         results_text: str
         results_dir: str
         requested_nodes: list[str]
+        bcm_rationale: str
+        llm_cmds_raw: str
+        summary_prompt: str
 
     async def assess_node(state: OrchestratorState):
         logger.info("assess_node: Starting node assessment...")
@@ -859,6 +865,20 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
         # Use LLM to create intelligent summary
         chain = summarization_prompt | reasoning_llm | StrOutputParser()
+
+        # Capture rendered prompt if debugging is enabled
+        rendered_prompt = ""
+        if config.include_prompts_in_output:
+            try:
+                # Handle both LC 0.2 and future versions
+                try:
+                    rendered_prompt = summarization_prompt.format(question=question, results=results)
+                except AttributeError:
+                    # Fallback for newer LC versions
+                    rendered_prompt = summarization_prompt.format_prompt(question=question, results=results).to_string()
+            except Exception:
+                rendered_prompt = "(failed to render prompt)"
+
         try:
             summary = await asyncio.wait_for(chain.ainvoke({
                 "question": question, "results": results
@@ -872,7 +892,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             logger.error("❌ summarize_results: LLM error: %s", str(e))
             summary = f"❌ Summary unavailable (LLM error): {e}"
 
-        return {**state, "analysis": summary}
+        return {**state, "analysis": summary, "summary_prompt": rendered_prompt}
 
     # ReAct agent removed in minimal workflow
 
@@ -931,18 +951,32 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         logger.info(llm_out)
         logger.info("=" * 60)
 
-        # 3) Extract only safe cmsh lines
+        # 3) Extract rationale with improved regex (more forgiving)
+        rationale_match = re.search(r"Rationale:\s*(.+?)(?:\n\s*Commands:|\Z)", llm_out, flags=re.S | re.I)
+        rationale = rationale_match.group(1).strip() if rationale_match else ""
+
+        # 4) Extract only safe cmsh lines
         extracted = _extract_cmsh_commands(llm_out)
         if not extracted:
-            return {**state, "bcm_commands": "❌ No valid cmsh commands extracted. Skipping execution."}
+            return {
+                **state,
+                "bcm_commands": "❌ No valid cmsh commands extracted. Skipping execution.",
+                "bcm_rationale": rationale,
+                "llm_cmds_raw": llm_out
+            }
 
-        # 4) Filter and normalize commands
+        # 5) Filter and normalize commands
         filtered = _filter_and_normalize(extracted, results_text, allowed_nodes)
         if not filtered:
-            return {**state, "bcm_commands": "❌ No valid commands remaining after filtering. Skipping execution."}
+            return {
+                **state,
+                "bcm_commands": "❌ No valid commands remaining after filtering. Skipping execution.",
+                "bcm_rationale": rationale,
+                "llm_cmds_raw": llm_out
+            }
 
         commands_payload = "\n".join(filtered)
-        return {**state, "bcm_commands": commands_payload}
+        return {**state, "bcm_commands": commands_payload, "bcm_rationale": rationale, "llm_cmds_raw": llm_out}
 
     async def execute_commands(state: OrchestratorState):
         if not executor:
@@ -962,11 +996,39 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         return {**state, "execution_result": exec_out}
 
     async def synthesize(state: OrchestratorState):
-        final = ("# DGX Orchestration\n\n"
-                 "## Reasoning and Decision\n" + (state.get("analysis", "") or "") + "\n\n"
-                 "## ReAct Agent Plan and Steps\n" + (state.get("react_agent_output", "") or "") + "\n\n"
-                 "## Generated BCM Commands\n" + (state.get("bcm_commands", "") or "") + "\n\n"
-                 "## Execution Result\n" + (state.get("execution_result", "") or "") + "\n")
+        # Build sections conditionally
+        sections = ["# DGX Orchestration\n"]
+
+        if state.get("analysis"):
+            sections.append("## Reasoning and Decision\n" + state.get("analysis", "") + "\n")
+
+        if state.get("react_agent_output"):
+            sections.append("## ReAct Agent Plan and Steps\n" + state.get("react_agent_output", "") + "\n")
+
+        # Only show rationale section when enabled AND we're in the commands path
+        if config.include_llm_rationale and state.get("bcm_rationale"):
+            sections.append("## Command Rationale\n" + state.get("bcm_rationale", "") + "\n")
+
+        if state.get("bcm_commands"):
+            sections.append("## Generated BCM Commands\n" + state.get("bcm_commands", "") + "\n")
+
+        if state.get("execution_result"):
+            sections.append("## Execution Result\n" + state.get("execution_result", "") + "\n")
+
+        # Debug section for prompts (only when explicitly enabled)
+        if config.include_prompts_in_output:
+            debug_sections = []
+            if state.get("llm_cmds_raw"):
+                debug_sections.append("### Command Generation (Full LLM Output)\n" +
+                                      _truncate_text(state.get("llm_cmds_raw", ""), 2000) + "\n")
+            if state.get("summary_prompt"):
+                debug_sections.append("### Summarization Prompt\n" +
+                                      _truncate_text(state.get("summary_prompt", ""), 1000) + "\n")
+
+            if debug_sections:
+                sections.append("## LLM Prompts/Responses (Debug)\n" + "\n".join(debug_sections))
+
+        final = "\n".join(sections)
         return {**state, "final_output": final}
 
     async def synthesize_diagnostics_only(state: OrchestratorState):
@@ -977,13 +1039,24 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         llm_summary = state.get("analysis", "") or ""
         results_dir = state.get("results_dir", "N/A")
 
-        # Build clean output with just the intelligent summary
-        final = ("# DGX Orchestration (Diagnostics Only)\n\n"
-                 "## Assessment Summary\n" + llm_summary + "\n\n"
-                 "## Notes\n"
-                 f"Results directory: {results_dir}\n"
-                 "No BCM commands were generated or executed.\n")
+        # Build sections conditionally
+        sections = [
+            "# DGX Orchestration (Diagnostics Only)\n",
+            "## Assessment Summary\n" + llm_summary + "\n",
+            "## Notes\n" + f"Results directory: {results_dir}\n" + "No BCM commands were generated or executed.\n"
+        ]
 
+        # Debug section for prompts (mirror the main synthesize function)
+        if config.include_prompts_in_output:
+            debug_sections = []
+            if state.get("summary_prompt"):
+                debug_sections.append("### Summarization Prompt\n" +
+                                      _truncate_text(state.get("summary_prompt", ""), 1000) + "\n")
+
+            if debug_sections:
+                sections.append("## LLM Prompts/Responses (Debug)\n" + "\n".join(debug_sections))
+
+        final = "\n".join(sections)
         logger.info("✅ synthesize_diagnostics_only: Synthesis completed")
         return {**state, "final_output": final}
 
