@@ -411,7 +411,6 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
                 index.storage_context.persist(persist_dir=persist_dir)
                 logger.info("Index created and persisted successfully")
 
-            # Create query engine optimized for accuracy
             query_engine = index.as_query_engine(similarity_top_k=config.similarity_top_k,
                                                  response_mode=config.response_mode,
                                                  verbose=True)
@@ -419,19 +418,16 @@ async def documentation_rag(config: DocumentationRAGConfig, _builder: Builder):
             logger.info("Executing query: %s", query)
             response = query_engine.query(query)
 
-            # Format the response with source information
             result = f"🤖 **{config.expert_type} Documentation Expert**\n\n"
             result += f"**Query:** {query}\n\n"
             result += f"**Answer:**\n{str(response)}\n\n"
 
-            # Add source information if available
             if hasattr(response, 'source_nodes') and response.source_nodes:
                 result += "**Sources:**\n"
                 for i, node in enumerate(response.source_nodes[:3], 1):
                     file_name = node.metadata.get('file_name', 'Unknown')
                     result += f"{i}. {file_name} (Score: {node.score:.3f})\n"
                 result += "\n"
-                # Show brief context snippets to reveal what informed the answer
                 result += "**Top retrieved context (snippets):**\n"
                 for i, node in enumerate(response.source_nodes[:3], 1):
                     source = node.metadata.get('file_name', 'Unknown')
@@ -718,40 +714,53 @@ async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder:
             # Make executable
             os.chmod(script_path, 0o755)
 
-            # Copy script to cluster
-            scp_cmd = ["scp", script_path, f"{config.cluster_user}@{config.cluster_host}:/tmp/network_assessment.sh"]
+            if config.cluster_host == "localhost":
+                # Execute locally
+                cmd = [script_path]
+                proc = await asyncio.create_subprocess_exec(*cmd,
+                                                            stdout=asyncio.subprocess.PIPE,
+                                                            stderr=asyncio.subprocess.PIPE)
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
+                returncode = proc.returncode
+            else:
+                # Copy script to cluster
+                scp_cmd = [
+                    "scp", script_path, f"{config.cluster_user}@{config.cluster_host}:/tmp/network_assessment.sh"
+                ]
 
-            scp_process = await asyncio.create_subprocess_exec(*scp_cmd,
-                                                               stdout=asyncio.subprocess.PIPE,
-                                                               stderr=asyncio.subprocess.PIPE)
-            await scp_process.communicate()
+                scp_process = await asyncio.create_subprocess_exec(*scp_cmd,
+                                                                   stdout=asyncio.subprocess.PIPE,
+                                                                   stderr=asyncio.subprocess.PIPE)
+                await scp_process.communicate()
 
-            if scp_process.returncode != 0:
-                return "❌ Failed to upload assessment script to cluster"
+                if scp_process.returncode != 0:
+                    return "❌ Failed to upload assessment script to cluster"
 
-            # Execute script on cluster
-            ssh_cmd = [
-                "ssh",
-                f"{config.cluster_user}@{config.cluster_host}",
-                "chmod +x /tmp/network_assessment.sh && /tmp/network_assessment.sh"
-            ]
+                # Execute script on cluster
+                ssh_cmd = [
+                    "ssh",
+                    f"{config.cluster_user}@{config.cluster_host}",
+                    "chmod +x /tmp/network_assessment.sh && /tmp/network_assessment.sh"
+                ]
 
-            ssh_process = await asyncio.create_subprocess_exec(*ssh_cmd,
-                                                               stdout=asyncio.subprocess.PIPE,
-                                                               stderr=asyncio.subprocess.PIPE)
+                ssh_process = await asyncio.create_subprocess_exec(*ssh_cmd,
+                                                                   stdout=asyncio.subprocess.PIPE,
+                                                                   stderr=asyncio.subprocess.PIPE)
 
-            stdout, stderr = await asyncio.wait_for(ssh_process.communicate(), timeout=config.timeout)
+                stdout, stderr = await asyncio.wait_for(ssh_process.communicate(), timeout=config.timeout)
+                returncode = ssh_process.returncode
 
             # Clean up local script
             os.unlink(script_path)
 
-            if ssh_process.returncode == 0:
+            if returncode == 0:
+                location = "locally" if config.cluster_host == "localhost" else "on cluster"
                 return f"""✅ Network assessment completed successfully!
 
 📋 Assessment Output:
 {stdout.decode('utf-8')}
 
-📁 Results saved on cluster in timestamped directory.
+📁 Results saved {location} in timestamped directory.
 Use the network_results_reader tool to analyze the results.
 
 🔍 Next steps:
@@ -821,22 +830,62 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
 
             results = []
 
-            # First, find the LATEST assessment directory
-            latest_dir_cmd = [
-                "ssh",
-                f"{config.cluster_user}@{config.cluster_host}",
-                f"ls -td {config.results_directory} 2>/dev/null | head -1"
-            ]
+            # Determine assessment directory (explicit path, stable symlink, or latest)
+            latest_dir = None
 
-            latest_process = await asyncio.create_subprocess_exec(*latest_dir_cmd,
-                                                                  stdout=asyncio.subprocess.PIPE,
-                                                                  stderr=asyncio.subprocess.PIPE)
+            # 1. Check for explicit directory in query
+            explicit = None
+            for token in query.split():
+                if token.startswith("/tmp/network_assessment_"):
+                    explicit = token
+                    break
 
-            latest_stdout, latest_stderr = await latest_process.communicate()
+            if explicit:
+                # Use explicit directory path
+                latest_dir = explicit
+                logger.info(f"Using explicit directory from query: {latest_dir}")
+            else:
+                # 2. Try stable symlink first
+                if config.cluster_host == "localhost":
+                    import os
+                    symlink_path = "/tmp/network_assessment_latest"
+                    if os.path.exists(symlink_path) and os.path.isdir(symlink_path):
+                        latest_dir = symlink_path
+                        logger.info(f"Using stable symlink: {latest_dir}")
+                else:
+                    # Check remote symlink
+                    symlink_cmd = [
+                        "ssh",
+                        f"{config.cluster_user}@{config.cluster_host}",
+                        "test -d /tmp/network_assessment_latest && echo /tmp/network_assessment_latest"
+                    ]
+                    symlink_proc = await asyncio.create_subprocess_exec(*symlink_cmd,
+                                                                        stdout=asyncio.subprocess.PIPE,
+                                                                        stderr=asyncio.subprocess.PIPE)
+                    symlink_stdout, _ = await symlink_proc.communicate()
+                    if symlink_proc.returncode == 0 and symlink_stdout.strip():
+                        latest_dir = symlink_stdout.decode('utf-8').strip()
+                        logger.info(f"Using remote stable symlink: {latest_dir}")
 
-            if latest_process.returncode == 0 and latest_stdout.strip():
-                latest_dir = latest_stdout.decode('utf-8').strip()
-                logger.info(f"Reading from latest assessment directory: {latest_dir}")
+                # 3. Fall back to finding latest directory by timestamp
+                if not latest_dir:
+                    latest_dir_cmd = [
+                        "ssh",
+                        f"{config.cluster_user}@{config.cluster_host}",
+                        f"ls -td {config.results_directory} 2>/dev/null | head -1"
+                    ]
+
+                    latest_process = await asyncio.create_subprocess_exec(*latest_dir_cmd,
+                                                                          stdout=asyncio.subprocess.PIPE,
+                                                                          stderr=asyncio.subprocess.PIPE)
+
+                    latest_stdout, latest_stderr = await latest_process.communicate()
+
+                    if latest_process.returncode == 0 and latest_stdout.strip():
+                        latest_dir = latest_stdout.decode('utf-8').strip()
+                        logger.info(f"Found latest assessment directory: {latest_dir}")
+
+            if latest_dir:
 
                 for file_pattern in files_to_read:
                     ssh_cmd = [
@@ -993,7 +1042,6 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
 
 
 print("✅ Network Config Extractor tool registered successfully")
-
 
 # ========================
 # Human-in-the-Loop (HITL) Approval and BCM Command Executor
@@ -1165,7 +1213,6 @@ async def code_execution_with_approval(config: CodeExecutionWithApprovalConfig, 
 
 print("✅ BCM Code Execution with Approval tool registered successfully")
 
-
 # ========================
 # LangGraph Network Orchestrator
 # ========================
@@ -1279,6 +1326,7 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
         requested_nodes: list[str]
         assessment: str
         results_text: str
+        results_dir: str
         analysis: str
         assessment_summary: str
         bcm_commands: str
@@ -1337,15 +1385,27 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
                                                 timeout=300)
         except Exception as e:
             assess_out = f"❌ Network assessment error: {e}"
-        # Read results (latest dir is resolved by reader)
+
+        # Extract results directory from assessment output
+        results_dir = ""
+        if assess_out:
+            m = re.search(r"(/tmp/network_assessment_[0-9_]+)", assess_out)
+            if m:
+                results_dir = m.group(1)
+                logger.info(f"Extracted results directory: {results_dir}")
+
+        # Read results with explicit directory if available
         results_text = ""
         try:
             reader = builder.get_function("network_results_reader")
             rq = state.get("results_query", "overview") or "overview"
-            results_text = await asyncio.wait_for(reader.ainvoke(rq), timeout=300)
+            # Include directory in query if we found one
+            rq_with_dir = f"{rq} {results_dir}" if results_dir else rq
+            results_text = await asyncio.wait_for(reader.ainvoke(rq_with_dir), timeout=300)
         except Exception as e:
             results_text = f"❌ Reading results failed: {e}"
-        return {**state, "assessment": assess_out, "results_text": results_text}
+
+        return {**state, "assessment": assess_out, "results_text": results_text, "results_dir": results_dir}
 
     async def summarize(state: State):
         # Summarize assessment results
@@ -1513,179 +1573,3 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
 
 
 print("✅ LangGraph Network Orchestrator registered successfully")
-
-
-# ========================
-# Deterministic Network Orchestrator (no LangGraph)
-# ========================
-
-
-class NetworkFactoryResetOrchestratorConfig(FunctionBaseConfig, name="network_factory_reset_orchestrator"):
-    """Orchestrate assessment → docs → BCM commands → approval/execution → optional validation."""
-
-    perform_post_validation: bool = Field(default=True, description="Re-run results reader after execution")
-
-
-@register_function(config_type=NetworkFactoryResetOrchestratorConfig)
-async def network_factory_reset_orchestrator(config: NetworkFactoryResetOrchestratorConfig, builder: Builder):
-    """Enforce tool call ordering independent of LLM plan."""
-
-    def _extract_cmsh_commands(text: str) -> str:
-        # Prefer strict line-based extraction
-        lines = []
-        for raw in text.splitlines():
-            s = raw.strip()
-            if s.startswith('cmsh -c "') or s.startswith("cmsh -c '") or s.startswith('cmsh '):
-                # remove trailing semicolons if present
-                lines.append(s.rstrip(';'))
-        if lines:
-            return "\n".join(lines)
-
-        # Fallback: split on semicolons if single-line
-        parts = [p.strip() for p in text.split(';')]
-        lines = [p for p in parts if p.startswith('cmsh -c "') or p.startswith("cmsh -c '")]
-        return "\n".join(lines)
-
-    def _filter_placeholders(cmds: list[str]) -> list[str]:
-        forbidden_substrings = ["NODE_NAME", "INTERFACE", "HEAD_NODE", "ROUTE_NAME"]
-        filtered: list[str] = []
-        for c in cmds:
-            if any(tok in c for tok in forbidden_substrings):
-                continue
-            filtered.append(c)
-        return filtered
-
-    async def _run(input_text: str) -> str:
-        logger.info("Starting network factory reset orchestrator")
-
-        # 1) Assessment first - always run fresh assessment
-        logger.info("Running fresh network assessment")
-        assess = builder.get_function("network_assessment_tool")
-        assess_out = await assess.ainvoke("Run comprehensive network assessment and save results")
-
-        # 2) Read detailed results (not just summary)
-        reader = builder.get_function("network_results_reader")
-        summary_out = await reader.ainvoke("summary")
-
-        # Also get detailed network and device info
-        logger.info("🔍 Reading detailed network and device information...")
-        try:
-            network_details = await reader.ainvoke("network")
-            device_details = await reader.ainvoke("device")
-            connectivity_details = await reader.ainvoke("connectivity")
-
-            # Combine all data for better context
-            full_assessment_data = (f"{summary_out}\n\nNETWORK DETAILS:\n{network_details}\n\n"
-                                    f"DEVICE DETAILS:\n{device_details}\n\nCONNECTIVITY:\n{connectivity_details}")
-            logger.info("🔍 Full assessment data length: %d chars", len(full_assessment_data))
-
-            # Debug: Show a sample of what we found
-            logger.info("🔍 NETWORK DETAILS PREVIEW: %s...",
-                        network_details[:300] if network_details else "No network details")
-            logger.info("🔍 DEVICE DETAILS PREVIEW: %s...",
-                        device_details[:300] if device_details else "No device details")
-
-        except Exception as e:
-            logger.warning("🔍 Could not read detailed assessment data: %s", str(e))
-            full_assessment_data = summary_out
-
-        # 3) Truncate summary for context management
-        max_summary_chars = 1500
-        if len(summary_out) > max_summary_chars:
-            summary_truncated = summary_out[:max_summary_chars] + "\n[...truncated...]"
-        else:
-            summary_truncated = summary_out
-        logger.info("Assessment summary: %d characters", len(summary_truncated))
-
-        # 4) Skip lengthy research step for now - we have YAML config
-        logger.info("🚀 Skipping research step - using direct YAML configuration")
-        research_out = "Using direct YAML configuration for cluster setup"
-
-        # 5) Extract current cluster context from assessment data (simplified)
-        def extract_current_context(assessment_data: str) -> str:
-            """Extract current network state from assessment data"""
-            lines = assessment_data.split('\n')
-            current_facts = []
-
-            # Look for key current state information (generic patterns)
-            for line in lines:
-                line_lower = line.lower()
-                if any(keyword in line_lower
-                       for keyword in ['node0', 'testcluster', 'net', 'dgx-', 'management', 'compute', 'storage']):
-                    if any(info in line_lower for info in ['ip', 'hostname', 'interface', 'network']):
-                        current_facts.append(line.strip())
-
-            return '\n'.join(current_facts[:10])  # Limit to first 10 relevant lines
-
-        current_context = extract_current_context(full_assessment_data)
-        logger.info("🔍 CURRENT CONTEXT: %s", current_context[:300])
-
-        # 6) Extract desired state configuration from YAML using our new tool
-        config_extractor = builder.get_function("network_config_extractor")
-        desired_state_config = await config_extractor.ainvoke("extract network configuration")
-        logger.info("🔍 DESIRED STATE CONFIG from YAML: %s", desired_state_config)
-
-        # 7) Combine current and desired state for BCM context
-        combined_context = (f"CURRENT STATE (from assessment):\n{current_context[:500]}\n\n"
-                            f"DESIRED STATE (from YAML):\n{desired_state_config}")
-        logger.info("🔍 COMBINED CONTEXT LENGTH: %d chars", len(combined_context))
-        # 8) Generate BCM commands using combined context
-        bcm_rag = builder.get_function("bcm_documentation_rag")
-        bcm_query = (
-            "You are a BCM expert. Read the configuration and plan before writing commands.\n"
-            "Output two sections in this exact order:\n"
-            "Rationale: 3-5 concise bullets referencing specific lines from CONTEXT (by quoting short snippets).\n"
-            "Commands: each line MUST start with cmsh -c \" and be one command per line.\n\n"
-            "Command requirements: use physical interfaces (no VLAN/alias), match network names and IP ranges.\n\n"
-            f"CONTEXT:\n{combined_context}")
-
-        logger.info("🔍 CONTEXT DEBUG - BCM Query Length: %d chars", len(bcm_query))
-
-        commands_text = await bcm_rag.ainvoke(bcm_query)
-        logger.info("🔍 CONTEXT DEBUG - BCM Commands Generated: %s...", commands_text[:500])
-        extracted = _extract_cmsh_commands(commands_text)
-        cmds_list = [c for c in extracted.splitlines() if c.strip()]
-        cmds_list = _filter_placeholders(cmds_list)
-
-        # Retry once with stricter instruction if we filtered everything out
-        if not cmds_list:
-            stricter_query = ("Generate safe BCM diagnostic commands for cluster reset.\n"
-                              "Output format: cmsh -c \"command\"\n"
-                              "If uncertain, default to safe read-ONLY diagnostic cmsh commands.")
-            commands_text_2 = await bcm_rag.ainvoke(stricter_query)
-            extracted_2 = _extract_cmsh_commands(commands_text_2)
-            cmds_list = _filter_placeholders([c for c in extracted_2.splitlines() if c.strip()])
-
-        commands_only = "\n".join(cmds_list) if cmds_list else extracted.strip() or commands_text.strip()
-
-        # 7) Execute with approval
-        executor = builder.get_function("bcm_executor")
-        exec_out = await executor.ainvoke(commands_only)
-
-        # 8) Optional post validation (read results again)
-        post_check = ""
-        if config.perform_post_validation:
-            try:
-                post_check = await reader.ainvoke("summary")
-                post_check = post_check[:1000] if len(post_check) > 1000 else post_check  # Truncate post-validation too
-            except Exception as e:
-                post_check = f"Post-validation read failed: {str(e)}"
-
-        # Assemble final output
-        sections = [
-            "✅ Network assessment:\n" + assess_out,
-            "📊 Assessment summary:\n" + summary_truncated,
-            "📚 Research guidance:\n" + research_out,
-            "🧰 Generated commands:\n" + commands_only,
-            "🚀 Execution result:\n" + exec_out,
-        ]
-        if post_check:
-            sections.append("🔎 Post-execution summary:\n" + post_check)
-
-        logger.info("Network factory reset orchestrator completed")
-        return "\n\n".join(sections)
-
-    yield FunctionInfo.from_fn(_run, description="Deterministic network factory-reset orchestrator")
-
-
-print("✅ Network Factory Reset Orchestrator registered successfully")

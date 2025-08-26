@@ -1,9 +1,12 @@
 #!/bin/bash
 # network_assessment.sh - Comprehensive BCM cluster networking assessment
 
-# Set output directory
-OUTPUT_DIR="/tmp/cluster_assessment_$(date +%Y%m%d_%H%M%S)"
+# Set output directory with predictable pattern
+OUTPUT_DIR="/tmp/network_assessment_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$OUTPUT_DIR"
+
+# Create stable symlink for easy access
+ln -sfn "$OUTPUT_DIR" /tmp/network_assessment_latest
 
 echo "Starting comprehensive network assessment..."
 echo "Output directory: $OUTPUT_DIR"
@@ -84,3 +87,4 @@ EOF
 
 echo "Assessment complete! Results saved to: $OUTPUT_DIR"
 echo "Summary file: $OUTPUT_DIR/00_SUMMARY.txt"
+echo "Results saved in: $OUTPUT_DIR"
