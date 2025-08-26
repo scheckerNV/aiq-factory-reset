@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-import yaml, sys, os, ipaddress
+import ipaddress
+import os
+import sys
+
+import yaml
 
 golden_path = sys.argv[1]
 outdir = sys.argv[2]
@@ -32,20 +36,20 @@ for node_name, node in (g.get("nodes") or {}).items():
 
     host_vars = {
         "nmstate_desired": {
-            "interfaces": [
-                {
-                    "name": iface,
-                    "type": "ethernet",
-                    "state": "up",
-                    "mtu": mtu,
-                    "ipv4": {
-                        "enabled": True,
-                        "address": [{"ip": ip, "prefix-length": prefix}],
-                        "gateway": gateway,
-                        "dns": dns,
-                    },
-                }
-            ]
+            "interfaces": [{
+                "name": iface,
+                "type": "ethernet",
+                "state": "up",
+                "mtu": mtu,
+                "ipv4": {
+                    "enabled": True,
+                    "address": [{
+                        "ip": ip, "prefix-length": prefix
+                    }],
+                    "gateway": gateway,
+                    "dns": dns,
+                },
+            }]
         }
     }
     with open(os.path.join(outdir, "host_vars", f"{hostname}.yml"), "w") as hf:
@@ -53,8 +57,12 @@ for node_name, node in (g.get("nodes") or {}).items():
 
     inv["all"]["children"]["compute"]["hosts"][hostname] = {"ansible_host": ip}
 
+# Create inventory with plugin header for Ansible compatibility
+inventory_content = {"plugin": "yaml", "strict": True}
+inventory_content.update(inv)
+
 with open(os.path.join(outdir, "inventory.yml"), "w") as f:
-    yaml.safe_dump(inv, f, sort_keys=False)
+    yaml.safe_dump(inventory_content, f, sort_keys=False)
 
 with open(os.path.join(outdir, "group_vars", "all.yml"), "w") as gf:
     yaml.safe_dump(
