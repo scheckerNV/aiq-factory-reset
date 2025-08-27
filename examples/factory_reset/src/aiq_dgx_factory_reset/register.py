@@ -1096,6 +1096,7 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
         summary_prompt: str
         execution_result: str
         final_output: str
+        ansible_plan_json: str
 
     # Routing (regex-first)
     def classify(user_input: str) -> tuple[str, str, list[str]]:
@@ -1334,12 +1335,37 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             out = f"❌ Execution error: {e}"
         return {**state, "execution_result": out}
 
+    # Add below existing generate/execute defs
+    import json
+
+    async def plan_ansible(state: State):
+        allowed = state.get("requested_nodes", [])
+        os.environ["AIQ_ALLOWED_NODES"] = ",".join(allowed)
+        try:
+            planner = builder.get_function("network_ansible_plan")
+            plan_json = await asyncio.wait_for(planner.ainvoke("plan"), timeout=180)
+        except Exception as e:
+            plan_json = json.dumps({
+                "tags": [], "limit_hosts": [], "extra_vars": {}, "rationale": [f"Planner error: {e}"], "notes": []
+            })
+        return {**state, "ansible_plan_json": plan_json}
+
+    async def execute_ansible(state: State):
+        try:
+            executor = builder.get_function("ansible_executor")
+            out = await asyncio.wait_for(executor.ainvoke(state.get("ansible_plan_json", "{}")), timeout=3600)
+        except Exception as e:
+            out = f"❌ Ansible execution error: {e}"
+        return {**state, "execution_result": out}
+
     async def synthesize(state: State):
         sections = ["# Network Orchestration\n"]
         if state.get("analysis"):
             sections.append("## Reasoning and Decision\n" + state.get("analysis", "") + "\n")
         if config.include_llm_rationale and state.get("bcm_rationale"):
             sections.append("## Command Rationale\n" + state.get("bcm_rationale", "") + "\n")
+        if state.get("ansible_plan_json"):
+            sections.append("## Ansible Plan\n" + _net_truncate(state.get("ansible_plan_json", ""), 2000) + "\n")
         if state.get("bcm_commands"):
             sections.append("## Generated BCM Commands\n" + state.get("bcm_commands", "") + "\n")
         if state.get("execution_result"):
@@ -1365,7 +1391,7 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
 
     def route_after_assess(state: State):
         act = state.get("action_type", "diagnostics_only")
-        return "generate" if act in ("generate_network_commands", "reset_network") else "summarize"
+        return "plan_ansible" if act in ("generate_network_commands", "reset_network") else "summarize"
 
     # Build graph
     graph = StateGraph(State)
@@ -1374,14 +1400,21 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
     graph.add_node("summarize", summarize)
     graph.add_node("generate", generate)
     graph.add_node("execute", execute)
+    graph.add_node("plan_ansible", plan_ansible)
+    graph.add_node("execute_ansible", execute_ansible)
     graph.add_node("synthesize", synthesize)
     graph.add_node("synthesize_diag", synthesize_diag)
 
     graph.set_entry_point("analyze")
     graph.add_conditional_edges("analyze", route_after_analyze, {"assess": "assess"})
-    graph.add_conditional_edges("assess", route_after_assess, {"generate": "generate", "summarize": "summarize"})
+    graph.add_conditional_edges("assess",
+                                route_after_assess, {
+                                    "plan_ansible": "plan_ansible", "summarize": "summarize"
+                                })
     graph.add_edge("generate", "execute")
     graph.add_edge("execute", "synthesize")
+    graph.add_edge("plan_ansible", "execute_ansible")
+    graph.add_edge("execute_ansible", "synthesize")
     graph.add_edge("summarize", "synthesize_diag")
     graph.add_edge("synthesize", END)
     graph.add_edge("synthesize_diag", END)

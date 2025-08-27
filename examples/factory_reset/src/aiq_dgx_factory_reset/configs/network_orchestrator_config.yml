@@ -30,7 +30,7 @@ functions:
     cluster_user: "root"  # Same as assessment tool
     results_directory: "/tmp/network_assessment_*"  # Where assessment saves results
 
-  # Network Config Extractor (required dependency)  
+  # Network Config Extractor (required dependency)
   network_config_extractor:
     _type: aiq_dgx_factory_reset/network_config_extractor
     networking_docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert"
@@ -44,6 +44,32 @@ functions:
     response_mode: "tree_summarize"
     nvidia_api_key: ""  # Set NVIDIA_API_KEY env var or provide here
     llama_cloud_api_key: ""  # Set LLAMA_CLOUD_API_KEY env var or provide here
+
+  network_ansible_plan:
+    _type: aiq_dgx_factory_reset/network_ansible_plan
+    reasoning_llm_name: reasoning_llm
+    allowed_tags:
+      - gather_facts_net
+      - validate_current
+      - configure_interfaces
+      - configure_bonds
+      - configure_vlans
+      - apply_nmstate
+      - reload_network
+      - connectivity_check
+      - rollback_checkpoint
+    required_tags:
+      - connectivity_check
+    default_checkpoint_timeout: 120
+
+  ansible_executor:
+    _type: aiq_dgx_factory_reset/ansible_executor
+    inventory_path: "/root/aiq-factory-reset/examples/factory_reset/ansible/inventory.yml"
+    playbook_path: "/root/aiq-factory-reset/examples/factory_reset/ansible/site.yml"
+    ansible_bin: "ansible-playbook"
+    hitl_approval_fn: hitl_code_approval
+    timeout: 1800
+    env_disable_hostkey_check: true
 
   # Code Execution with Approval (required dependency)
   code_execution_with_approval:
@@ -77,6 +103,6 @@ workflow:
 
 # Environment variables you need to set:
 # export NVIDIA_API_KEY="your-nvidia-api-key"
-# export LLAMA_CLOUD_API_KEY="your-llama-cloud-api-key" 
+# export LLAMA_CLOUD_API_KEY="your-llama-cloud-api-key"
 # export CLUSTER_HOST="your-cluster-headnode"
 # export CLUSTER_USER="your-ssh-username"

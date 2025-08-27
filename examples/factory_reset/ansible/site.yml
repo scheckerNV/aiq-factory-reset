@@ -5,7 +5,7 @@
   any_errors_fatal: true
   serial: 1
   vars:
-    nm_checkpoint_timeout: "{{ nm_checkpoint_timeout | default(120) }}"
+    nm_checkpoint_timeout: 120
   pre_tasks:
     - name: Gather minimal facts (network only)
       ansible.builtin.setup:
