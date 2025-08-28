@@ -90,7 +90,7 @@ Both configurations use:
 4. **Qwen2.5 validates commands** (new)
 5. **System prompts you for approval** (new)
    ```
-   🔧 NETWORK FACTORY RESET COMMANDS
+   NETWORK FACTORY RESET COMMANDS
    Target Cluster: schecker-testcluster
 
    The following commands will be executed:

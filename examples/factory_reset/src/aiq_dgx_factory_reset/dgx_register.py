@@ -636,14 +636,12 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         else:
             results_query_with_dir = results_query
 
-        # Read detailed results for LLM analysis (but don't dump in final output)
         logger.info("assess_node: Reading assessment results with query: %s", results_query_with_dir)
         results_text = ""
         if node_reader:
             try:
                 raw_results = await asyncio.wait_for(node_reader.ainvoke(results_query_with_dir),
                                                      timeout=LOCAL_CMD_TIMEOUT)
-                # Clean ANSI codes and store for LLM summarization
                 results_text = _strip_ansi(raw_results)
                 logger.info("✅ assess_node: Results read successfully")
             except Exception as e:
@@ -652,7 +650,6 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         else:
             logger.warning("assess_node: No node_reader tool available")
 
-        # Keep analysis clean (no raw file dumps)
         analysis = state.get("analysis", "") or ""
 
         logger.info("assess_node: Completed, returning state")
@@ -675,11 +672,8 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         logger.info("User input being analyzed: '%s'", (state.get("input", "") or "")[:200])
         import json as _json
 
-        # Skip reader call in analyze_and_decide to avoid duplicates
-        # Assessment will be refreshed after node_assessment runs
         reader_out = ""
 
-        # === Determine results detail level based on user input ===
         user_input = (state.get("input", "") or "").lower()
         results_query = "summary"  # default
 
@@ -688,9 +682,8 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         elif any(term in user_input for term in ["overview", "cluster health", "burn configs"]):
             results_query = "overview"
         elif any(term in user_input for term in ["state", "status", "current", "what", "show", "list"]):
-            results_query = "overview"  # More detailed than summary for status queries
+            results_query = "overview"
 
-        # Store results query in state for use in assess_node
         state["results_query"] = results_query
 
         # Extract and store requested target nodes

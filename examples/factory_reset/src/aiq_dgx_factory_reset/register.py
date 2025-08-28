@@ -202,7 +202,7 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                         result += f"{i}. {source}: {snippet}…\n"
 
             result += "**Source:** BCM Administration Manual\n\n"
-            result += "⚠️  **Note:** Please verify commands in your specific BCM environment before execution."
+            result += "**Note:** Please verify commands in your specific BCM environment before execution."
 
             return result
 
@@ -361,7 +361,7 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
                             documents.append(Document(text=content, metadata=metadata))
                             logger.info("✅ Processed %s", yaml_file.name)
                         except Exception as e:
-                            logger.warning("⚠️ Failed to load %s: %s", yaml_file, e)
+                            logger.warning("Failed to load %s: %s", yaml_file, e)
 
                 # Process markdown files if any
                 md_files = list(docs_path_obj.glob("*.md"))
@@ -424,7 +424,7 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
                     if snippet:
                         result += f"{i}. {source}: {snippet}…\n"
 
-            result += "⚠️  **Note:** Please verify commands in your specific Cluster environment before execution."
+            result += "**Note:** Please verify commands in your specific Cluster environment before execution."
 
             return result
 
@@ -988,7 +988,6 @@ def _net_extract_cmsh_commands(text: str) -> list[str]:
     for line in (text or "").splitlines():
         s = line.strip()
         if s.startswith('cmsh -c "') or s.startswith("cmsh -c '") or s.lower().startswith("cmsh -c "):
-            # normalize quotes to double
             if s.startswith("cmsh -c '"):
                 s = 'cmsh -c "' + s[len("cmsh -c '"):-1] + '"'
             cmds.append(s)
@@ -1464,7 +1463,7 @@ async def network_ansible_plan(config: NetworkAnsiblePlanConfig, builder: Builde
             golden_facts = await asyncio.wait_for(extractor.ainvoke("extract network configuration"), timeout=60)
             logger.info("✅ Retrieved golden state facts")
         except Exception as e:
-            logger.warning("⚠️ Golden facts unavailable: %s", e)
+            logger.warning("Golden facts unavailable: %s", e)
             golden_facts = "(golden facts unavailable)"
 
         try:
@@ -1472,7 +1471,7 @@ async def network_ansible_plan(config: NetworkAnsiblePlanConfig, builder: Builde
             assessment_text = await asyncio.wait_for(reader.ainvoke("full"), timeout=120)
             logger.info("✅ Retrieved assessment results")
         except Exception as e:
-            logger.warning("⚠️ Assessment unavailable: %s", e)
+            logger.warning("Assessment unavailable: %s", e)
             assessment_text = "(assessment unavailable)"
 
         # Get allowed nodes from environment (set by orchestrator)
@@ -1520,7 +1519,7 @@ Return only valid JSON with the required structure.
             llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
             chain = prompt_template | llm | StrOutputParser()
 
-            logger.info("🤖 Invoking LLM for Ansible planning")
+            logger.info("Invoking LLM for Ansible planning")
             raw_response = await asyncio.wait_for(
                 chain.ainvoke({
                     "guardrails": "\n- ".join(guardrails),
@@ -1576,7 +1575,7 @@ Return only valid JSON with the required structure.
             data["extra_vars"] = extra_vars
 
             result_json = json.dumps(data, indent=2)
-            logger.info("📋 Plan generated: %d tags, %d hosts", len(tags), len(limit_hosts))
+            logger.info("Plan generated: %d tags, %d hosts", len(tags), len(limit_hosts))
             return result_json
 
         except Exception as e:
@@ -1624,7 +1623,7 @@ async def ansible_executor(config: AnsibleExecutorConfig, builder: Builder):
         """Execute Ansible plan with check mode followed by apply after approval"""
         try:
             plan = json.loads(plan_json)
-            logger.info("📋 Executing Ansible plan with %d tags", len(plan.get("tags", [])))
+            logger.info("Executing Ansible plan with %d tags", len(plan.get("tags", [])))
         except Exception as e:
             return f"❌ Invalid planner JSON: {e}"
 
@@ -1650,7 +1649,7 @@ async def ansible_executor(config: AnsibleExecutorConfig, builder: Builder):
 
         async def run_cmd(args):
             """Execute ansible-playbook command"""
-            logger.info("🔧 Running: %s", " ".join(shlex.quote(arg) for arg in args))
+            logger.info("Running: %s", " ".join(shlex.quote(arg) for arg in args))
             proc = await asyncio.create_subprocess_exec(*args,
                                                         stdout=asyncio.subprocess.PIPE,
                                                         stderr=asyncio.subprocess.PIPE,
@@ -1677,7 +1676,7 @@ async def ansible_executor(config: AnsibleExecutorConfig, builder: Builder):
         ]
 
         # Step 1: CHECK MODE
-        logger.info("🔍 Running Ansible in check mode")
+        logger.info("Running Ansible in check mode")
         check_cmd = base_cmd + ["--check", "--diff"]
         rc_check, out_check, err_check = await run_cmd(check_cmd)
 
@@ -1688,7 +1687,7 @@ async def ansible_executor(config: AnsibleExecutorConfig, builder: Builder):
         # Step 2: Get HITL approval
         try:
             approval_fn = builder.get_function(config.hitl_approval_fn)
-            logger.info("👤 Requesting human approval")
+            logger.info("Requesting human approval")
         except Exception as e:
             return f"❌ HITL approval function '{config.hitl_approval_fn}' not found: {e}"
 
@@ -1732,7 +1731,7 @@ async def ansible_executor(config: AnsibleExecutorConfig, builder: Builder):
         if rc_apply == 0:
             logger.info("✅ Ansible execution completed successfully")
         else:
-            logger.warning("⚠️ Ansible execution completed with errors (rc=%d)", rc_apply)
+            logger.warning("Ansible execution completed with errors (rc=%d)", rc_apply)
 
         return result
 

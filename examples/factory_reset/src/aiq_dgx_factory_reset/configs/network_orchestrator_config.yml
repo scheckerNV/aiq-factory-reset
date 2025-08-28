@@ -84,7 +84,7 @@ functions:
   # Human-in-the-Loop Approval (required by code_execution_with_approval)
   hitl_code_approval:
     _type: aiq_dgx_factory_reset/hitl_code_approval
-    prompt: "⚠️ NETWORK FACTORY RESET ⚠️\n\nPlease review the following BCM networking commands carefully:"
+    prompt: "NETWORK FACTORY RESET \n\nPlease review the following BCM networking commands carefully:"
 
 llms:
   reasoning_llm:
