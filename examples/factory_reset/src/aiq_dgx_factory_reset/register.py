@@ -1705,7 +1705,7 @@ async def ansible_executor(config: AnsibleExecutorConfig, builder: Builder):
             return f"❌ Ansible execution cancelled by user.\n\n{check_summary}"
 
         # Step 3: APPLY
-        logger.info("⚙️ Running Ansible apply mode")
+        logger.info("Running Ansible apply mode")
         apply_cmd = base_cmd  # No --check flag
         rc_apply, out_apply, err_apply = await run_cmd(apply_cmd)
 
