@@ -1,10 +1,3 @@
-"""
-BCM Documentation RAG with LlamaIndex
-
-This module provides accurate retrieval of BCM (Bright Cluster Manager) documentation
-using LlamaIndex, LlamaParse, and NVIDIA embeddings for high-quality RAG responses.
-"""
-
 import asyncio
 import glob
 import logging
@@ -55,7 +48,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             return f"❌ BCM documentation not found at {docs_path}"
 
         try:
-            # Import LlamaIndex dependencies
             from llama_index.core import Document
             from llama_index.core import Settings
             from llama_index.core import StorageContext
@@ -65,7 +57,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             from llama_index.llms.nvidia import NVIDIA
             from llama_parse import LlamaParse
 
-            # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
             llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
 
@@ -83,7 +74,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             # Configure LlamaIndex with NVIDIA models for accuracy
             Settings.llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
             Settings.embed_model = NVIDIAEmbedding(model="nvidia/llama-3.2-nv-embedqa-1b-v2", truncate="END")
-            # Enable debug/tracing so reasoning signals are visible in logs (optional)
             try:
                 from llama_index.core.callbacks import CallbackManager
                 from llama_index.core.callbacks import LlamaDebugHandler
@@ -91,12 +81,10 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                 Settings.callback_manager = CallbackManager(
                     [LlamaDebugHandler(print_trace_on_end=True), TokenCountingHandler()])
             except Exception:
-                # Debug handlers are optional; ignore if unavailable
                 pass
 
             logger.info("Processing BCM documentation from %s", docs_path)
 
-            # Check for existing index
             docstore_path = os.path.join(persist_dir, "docstore.json")
             if os.path.exists(docstore_path):
                 logger.info("Loading existing BCM index...")
@@ -109,7 +97,7 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                 documents = []
                 docs_path_obj = Path(docs_path)
 
-                # Process PDF files with LlamaParse for high-quality extraction
+                # Process PDF files with LlamaParse
                 pdf_files = list(docs_path_obj.glob("*.pdf"))
                 if pdf_files and llama_api_key:
                     logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
@@ -118,7 +106,7 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                         try:
                             logger.info("Processing %s individually...", pdf_file.name)
 
-                            # Create a fresh parser instance for each file
+                            # fresh parser instance for each file
                             file_parser = LlamaParse(verbose=True)
                             pdf_docs = file_parser.load_data(str(pdf_file))
 
@@ -129,7 +117,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                             documents.extend(pdf_docs)
                             logger.info("Successfully processed %s (%d documents)", pdf_file.name, len(pdf_docs))
 
-                            # Clean up
                             del file_parser
 
                         except Exception as e:
@@ -140,7 +127,7 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                     logger.info("Found %d PDF files but no LlamaCloud API key provided, skipping PDF processing",
                                 len(pdf_files))
 
-                # Process markdown files if any
+                # Process md files if any
                 md_files = list(docs_path_obj.glob("*.md"))
                 if md_files:
                     logger.info("Found %d markdown files...", len(md_files))
@@ -164,7 +151,7 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                 index.storage_context.persist(persist_dir=persist_dir)
                 logger.info("Index created and persisted successfully")
 
-            # Create query engine optimized for accuracy
+            # Create query engine
             query_engine = index.as_query_engine(similarity_top_k=config.similarity_top_k,
                                                  response_mode=config.response_mode,
                                                  verbose=True)
@@ -172,12 +159,10 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             logger.info("Executing query: %s", query)
             response = query_engine.query(query)
 
-            # Format the response with source information
             result = "**BCM Documentation Expert**\n\n"
             result += f"**Query:** {query}\n\n"
             result += f"**Answer:**\n{str(response)}\n\n"
 
-            # Add source information if available
             if hasattr(response, 'source_nodes') and response.source_nodes:
                 result += "**Sources:**\n"
                 for i, node in enumerate(response.source_nodes[:3], 1):  # Show top 3 sources
@@ -185,7 +170,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                     score = getattr(node, 'score', 'N/A')
                     result += f"{i}. {source} (relevance: {score:.3f})\n"
                 result += "\n"
-                # Show brief context snippets to reveal what informed the answer
                 result += "**Top retrieved context (snippets):**\n"
                 for i, node in enumerate(response.source_nodes[:3], 1):
                     source = node.metadata.get('file_name', 'Unknown')
@@ -219,7 +203,7 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
 print("✅ BCM Documentation RAG function registered successfully")
 
 # ========================
-# Networking Expert RAG Tool
+# Networking Expert RAG Tool - not used. Kept here for reference.
 # ========================
 
 
@@ -251,7 +235,6 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
             return f"❌ Networking documentation not found at {docs_path}"
 
         try:
-            # Import LlamaIndex dependencies
             import yaml
             from llama_index.core import Document
             from llama_index.core import Settings
@@ -261,8 +244,6 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
             from llama_index.embeddings.nvidia import NVIDIAEmbedding
             from llama_index.llms.nvidia import NVIDIA
 
-            # from llama_parse import LlamaParse  # Not currently used
-            # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
             llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
 
@@ -277,10 +258,8 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
             os.environ["NVIDIA_API_KEY"] = nvidia_api_key
             os.environ["LLAMA_CLOUD_API_KEY"] = llama_api_key
 
-            # Configure LlamaIndex with NVIDIA models for accuracy
             Settings.llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
             Settings.embed_model = NVIDIAEmbedding(model="nvidia/llama-3.2-nv-embedqa-1b-v2", truncate="END")
-            # Enable debug/tracing so reasoning signals are visible in logs (optional)
             try:
                 from llama_index.core.callbacks import CallbackManager
                 from llama_index.core.callbacks import LlamaDebugHandler
@@ -292,7 +271,6 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
 
             logger.info("Processing Networking documentation from %s", docs_path)
 
-            # Check for existing index
             docstore_path = os.path.join(persist_dir, "docstore.json")
             if os.path.exists(docstore_path):
                 logger.info("Loading existing Networking index...")
@@ -305,7 +283,6 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
                 documents = []
                 docs_path_obj = Path(docs_path)
 
-                # Process PDF files with LlamaParse for high-quality extraction
                 pdf_files = list(docs_path_obj.glob("*.pdf"))
                 if pdf_files and llama_api_key:
                     logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
@@ -363,7 +340,6 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
                         except Exception as e:
                             logger.warning("Failed to load %s: %s", yaml_file, e)
 
-                # Process markdown files if any
                 md_files = list(docs_path_obj.glob("*.md"))
                 if md_files:
                     logger.info("Found %d markdown files...", len(md_files))
@@ -387,7 +363,6 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
                 index.storage_context.persist(persist_dir=persist_dir)
                 logger.info("Index created and persisted successfully")
 
-            # Create query engine optimized for accuracy
             query_engine = index.as_query_engine(similarity_top_k=config.similarity_top_k,
                                                  response_mode=config.response_mode,
                                                  verbose=True)
@@ -395,12 +370,10 @@ async def networking_expert_rag(config: NetworkingExpertRAGConfig, _builder: Bui
             logger.info("Executing query: %s", query)
             response = query_engine.query(query)
 
-            # Format the response with source information
             result = "**Networking Documentation Expert**\n\n"
             result += f"**Query:** {query}\n\n"
             result += f"**Answer:**\n{str(response)}\n\n"
 
-            # Add source information if available
             if hasattr(response, 'source_nodes') and response.source_nodes:
                 result += "**Sources:**\n"
                 for i, node in enumerate(response.source_nodes[:3], 1):  # Show top 3 sources
@@ -458,8 +431,6 @@ async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder:
         import asyncio
         import tempfile
 
-        # Create the assessment script
-        # Read the shell script content from the external file
         script_path_on_disk = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
                                            "scripts",
                                            "network_assessment.sh")
@@ -467,7 +438,6 @@ async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder:
             script_content = f.read()
 
         try:
-            # Upload and execute the script
             with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
                 f.write(script_content)
                 script_path = f.name
@@ -484,7 +454,6 @@ async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder:
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
                 returncode = proc.returncode
             else:
-                # Copy script to cluster
                 scp_cmd = [
                     "scp", script_path, f"{config.cluster_user}@{config.cluster_host}:/tmp/network_assessment.sh"
                 ]
@@ -497,7 +466,7 @@ async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder:
                 if scp_process.returncode != 0:
                     return "❌ Failed to upload assessment script to cluster"
 
-                # Execute script on cluster
+                # exec script on cluster
                 ssh_cmd = [
                     "ssh",
                     f"{config.cluster_user}@{config.cluster_host}",
@@ -511,7 +480,6 @@ async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder:
                 stdout, stderr = await asyncio.wait_for(ssh_process.communicate(), timeout=config.timeout)
                 returncode = ssh_process.returncode
 
-            # Clean up local script
             os.unlink(script_path)
 
             if returncode == 0:
@@ -562,11 +530,9 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
         import asyncio
 
         try:
-            # Handle default query
             if not query or query.strip() == "":
                 query = "summary"
 
-            # Determine which files to read based on query
             if "summary" in query.lower():
                 files_to_read = ["00_SUMMARY.txt"]
             elif "device" in query.lower():
@@ -578,7 +544,6 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
             elif "network" in query.lower():
                 files_to_read = ["03_networks.txt", "04_interfaces.txt"]
             elif "full" in query.lower() or "all" in query.lower():
-                # Return combined assessment data for orchestrator
                 files_to_read = [
                     "00_SUMMARY.txt",
                     "03_networks.txt",
@@ -591,10 +556,8 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
 
             results = []
 
-            # Determine assessment directory (explicit path, stable symlink, or latest)
             latest_dir = None
 
-            # 1. Check for explicit directory in query
             explicit = None
             for token in query.split():
                 if token.startswith("/tmp/network_assessment_"):
@@ -602,11 +565,9 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                     break
 
             if explicit:
-                # Use explicit directory path
                 latest_dir = explicit
                 logger.info(f"Using explicit directory from query: {latest_dir}")
             else:
-                # 2. Try stable symlink first
                 if config.cluster_host == "localhost":
                     import os
                     symlink_path = "/tmp/network_assessment_latest"
@@ -614,7 +575,6 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                         latest_dir = symlink_path
                         logger.info(f"Using stable symlink: {latest_dir}")
                 else:
-                    # Check remote symlink
                     symlink_cmd = [
                         "ssh",
                         f"{config.cluster_user}@{config.cluster_host}",
@@ -628,7 +588,6 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                         latest_dir = symlink_stdout.decode('utf-8').strip()
                         logger.info(f"Using remote stable symlink: {latest_dir}")
 
-                # 3. Fall back to finding latest directory by timestamp
                 if not latest_dir:
                     latest_dir_cmd = [
                         "ssh",
@@ -706,14 +665,11 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
     async def _extract_network_config_from_yaml(query: str) -> str:
         """Extract network configuration directly from YAML config file"""
         try:
-            # Use the config path, not the input parameter
             networking_docs_path = config.networking_docs_path
 
-            # If it's already an absolute path to a file, use it directly
             if networking_docs_path.endswith('.yaml') and os.path.isfile(networking_docs_path):
                 config_file = networking_docs_path
             else:
-                # Otherwise, look for config files in the directory
                 config_files = glob.glob(os.path.join(networking_docs_path, "*_config.yaml"))
                 if not config_files:
                     return f"No network config YAML found in {networking_docs_path}/"
@@ -727,7 +683,6 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
             facts = []
             cluster_name = "unknown"
 
-            # Extract cluster name
             if 'metadata' in config_data and 'cluster_name' in config_data['metadata']:
                 cluster_name = config_data['metadata']['cluster_name']
             elif 'cluster' in config_data and 'name' in config_data['cluster']:
@@ -735,9 +690,7 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
 
             facts.append(f"CLUSTER: {cluster_name}")
 
-            # Parse network fabrics (handles both schecker and demeter formats)
             if 'network_fabrics' in config_data:
-                # Demeter format: network_fabrics.management.subnet
                 for fabric_name, fabric_config in config_data['network_fabrics'].items():
                     name = fabric_config.get('name', fabric_name)
                     subnet = fabric_config.get('subnet')
@@ -750,7 +703,6 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
                             f"NETWORK: {name} uses {subnet} gateway {gateway} type {fabric_type}{interface_str}")
 
             elif 'networks' in config_data:
-                # Schecker format: networks.internal.subnet
                 for net_name, net_config in config_data['networks'].items():
                     name = net_config.get('name')
                     subnet = net_config.get('subnet')
@@ -760,24 +712,20 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
                         interface_str = f" interface {interface}" if interface else ""
                         facts.append(f"NETWORK: {name} uses {subnet} gateway {gateway}{interface_str}")
 
-            # Parse node definitions for head node and sample workers
             if 'nodes' in config_data:
-                # Extract head node and first few worker nodes
                 node_count = 0
                 for node_name, node_config in config_data['nodes'].items():
-                    if node_count >= 5:  # Limit to first 5 nodes
+                    if node_count >= 5:
                         break
                     if 'networks' in node_config:
                         for net_type, net_info in node_config['networks'].items():
                             if isinstance(net_info, dict) and 'ip' in net_info:
                                 facts.append(f"NODE: {node_name} on {net_type} = {net_info['ip']}")
                     elif 'hostname' in node_config:
-                        # Handle simpler node format
                         hostname = node_config['hostname']
                         facts.append(f"NODE: {hostname}")
                     node_count += 1
 
-            # Parse infrastructure nodes if present
             if 'infrastructure' in config_data:
                 infra = config_data['infrastructure']
                 if 'management_nodes' in infra:
@@ -785,7 +733,6 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
                         if 'ip' in node_config:
                             facts.append(f"MGMT_NODE: {node_name} = {node_config['ip']}")
 
-            # If no detailed network info was found, try to extract from other sections
             if len([f for f in facts if f.startswith('NETWORK:')]) == 0:
                 facts.append("WARNING: No network configuration found in YAML")
 
@@ -871,7 +818,6 @@ async def code_execution_with_approval(config: CodeExecutionWithApprovalConfig, 
         if not bcm_commands or not bcm_commands.strip():
             return "❌ No BCM commands provided for execution"
 
-        # Optional LLM validation step (best-effort)
         validation_notes = ""
         if config.coder_llm_name:
             try:
@@ -884,7 +830,6 @@ async def code_execution_with_approval(config: CodeExecutionWithApprovalConfig, 
             except Exception:
                 validation_notes = "\n🔎 Validation (coder): skipped (LLM unavailable)\n"
 
-        # Human approval via configured HITL function
         try:
             approval_fn = builder.get_function(config.hitl_approval_fn)
         except Exception:
@@ -1097,7 +1042,7 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
         final_output: str
         ansible_plan_json: str
 
-    # Routing (regex-first)
+    # routing (regex-first)
     def classify(user_input: str) -> tuple[str, str, list[str]]:
         ui = user_input or ""
         ui_l = ui.lower()
@@ -1150,7 +1095,6 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
     async def assess(state: State):
         logger.info("assess: Starting network assessment")
 
-        # Run assessment
         try:
             assess_tool = builder.get_function("network_assessment_tool")
             logger.info("assess: Executing network_assessment_tool")
@@ -1161,7 +1105,6 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             logger.error("❌ assess: Network assessment failed: %s", e)
             assess_out = f"❌ Network assessment error: {e}"
 
-        # Extract results directory from assessment output
         results_dir = ""
         if assess_out:
             m = re.search(r"(/tmp/network_assessment_[0-9_]+)", assess_out)
@@ -1171,12 +1114,11 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             else:
                 logger.warning("assess: Could not extract results directory from assessment output")
 
-        # Read results with explicit directory if available
+        # read assessment results
         results_text = ""
         try:
             reader = builder.get_function("network_results_reader")
             rq = state.get("results_query", "overview") or "overview"
-            # Include directory in query if we found one
             rq_with_dir = f"{rq} {results_dir}" if results_dir else rq
             if results_dir:
                 logger.info("assess: Reading results with query '%s' from directory %s", rq, results_dir)
@@ -1193,7 +1135,6 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
     async def summarize(state: State):
         logger.info("summarize: Starting LLM-based assessment summarization")
 
-        # Summarize assessment results
         try:
             llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
             logger.info("✅ summarize: LLM acquired successfully")
@@ -1226,7 +1167,6 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
     async def generate(state: State):
         logger.info("generate: Starting BCM command generation")
 
-        # Build context and ask BCM RAG/LLM for commands
         try:
             llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
             logger.info("✅ generate: LLM acquired successfully")
@@ -1234,7 +1174,6 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             logger.error("❌ generate: Could not acquire LLM: %s", e)
             return {**state, "bcm_commands": f"❌ Could not acquire LLM: {e}"}
 
-        # Desired config from YAML
         logger.info("generate: Extracting desired configuration")
         desired = ""
         try:
@@ -1245,7 +1184,6 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             logger.warning("generate: Desired config extraction failed: %s", e)
             desired = f"(desired config unavailable: {e})"
 
-        # Optional BCM docs RAG (kept simple; returns plain text guidance)
         logger.info("generate: Querying BCM documentation RAG")
         bcm_docs = ""
         try:
@@ -1276,18 +1214,17 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             logger.error("❌ generate: LLM command generation failed: %s", e)
             llm_out = f"[Error generating commands: {e}]"
 
-        # Extract rationale
+        # extract rationale
         m = re.search(r"Rationale:\s*(.+?)(?:\n\s*Commands:|\Z)", llm_out, flags=re.S | re.I)
         rationale = m.group(1).strip() if m else ""
         logger.info("generate: Extracted rationale: %s chars", len(rationale))
 
-        # Extract and filter commands
+        # extract and filter commands
         extracted = _net_extract_cmsh_commands(llm_out)
         filtered = _net_filter_placeholders(extracted)
         logger.info("generate: Extracted %d commands, filtered to %d valid commands", len(extracted), len(filtered))
 
         if state.get("action_type") == "reset_network" and allowed_nodes:
-            # Soft coverage nudge: warn if no commands for some requested nodes
             present = set()
             for c in filtered:
                 match = re.search(r'device use\s+(\S+)', c)
@@ -1334,7 +1271,6 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             out = f"❌ Execution error: {e}"
         return {**state, "execution_result": out}
 
-    # Add below existing generate/execute defs
     import json
 
     async def plan_ansible(state: State):
@@ -1392,7 +1328,7 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
         act = state.get("action_type", "diagnostics_only")
         return "plan_ansible" if act in ("generate_network_commands", "reset_network") else "summarize"
 
-    # Build graph
+    # build graph
     graph = StateGraph(State)
     graph.add_node("analyze", analyze)
     graph.add_node("assess", assess)

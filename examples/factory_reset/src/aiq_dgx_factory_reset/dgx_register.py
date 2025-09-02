@@ -117,7 +117,6 @@ class DGXExpertRAGConfig(FunctionBaseConfig, name="dgx_expert_rag"):
 async def dgx_expert_rag(config: DGXExpertRAGConfig, _builder: Builder):  # noqa: ARG001
 
     async def _search_dgx_docs(query: str) -> str:
-        # Minimal mode: disable heavy RAG to avoid blocking and complexity during bring-up
         return ("DGX Documentation RAG disabled (minimal workflow mode).\n"
                 f"Query: {query}")
 
@@ -507,7 +506,7 @@ def _filter_and_normalize(cmds: list[str], results_text: str, allowed_nodes: lis
             logger.info("Filtered out head/mgmt node command: %s", original_cmd)
             continue
 
-        # Enforce allowed nodes if provided
+        # enforce allowed nodes if provided
         if allowed_nodes:
             node_found = any(f"device use {node}" in c for node in allowed_nodes)
             if not node_found and not c.startswith('cmsh -c "device; list') and not c.startswith(
@@ -559,8 +558,6 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         executor = builder.get_function(config.executor_fn)
     except Exception:
         executor = None
-
-    # No decision prompt in minimal mode; regex-based routing only
 
     commands_prompt = PromptTemplate.from_template(_load_cmd_prompt(config))
 
@@ -627,10 +624,8 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                 results_dir = m.group(1)
                 logger.info("assess_node: Found results directory: %s", results_dir)
 
-        # Get the appropriate results query (set in analyze_and_decide)
-        results_query = state.get("results_query", "overview")  # default to overview for better detail
+        results_query = state.get("results_query", "overview")
 
-        # Include directory in query if we found one
         if results_dir:
             results_query_with_dir = f"{results_query} {results_dir}"
         else:
@@ -686,16 +681,13 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
         state["results_query"] = results_query
 
-        # Extract and store requested target nodes
         requested_nodes = _extract_requested_nodes(user_input)
         state["requested_nodes"] = requested_nodes
 
-        # === Minimal classification: regex-only ===
         extracted_json = "{}"
         action_type = "diagnostics_only"
         decision_obj = None
 
-        # === Deterministic overrides (user input only with tighter regex) ===
         user_input = (state.get("input", "") or "")
 
         reset_actions = (r"(\bfactory\s*-?\s*)?\breset\b|\bre-?image\b|\bre-?install\b|\bre-?flash\b"
@@ -730,12 +722,10 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             action_type = "generate_bcm_commands"
             override_applied = True
 
-        # Explicit diagnostics intent clamp (but don't override command/reset intent)
         diagnostics_intent_regex = re.compile(
             r"\b(state|status|health|condition|what.?s\s+the\s+(current\s+)?state|overview|summary|list|show)\b",
             re.IGNORECASE,
         )
-        # Only apply diagnostics clamp if there's no explicit command/reset intent
         has_explicit_action_intent = re.search(
             r'\b(cmsh|commands?|reset|re-?image|re-?install|re-?flash|wipe(?:d|s|ing)?|revert)\b',
             user_input,
@@ -751,13 +741,12 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                 "Orchestrator: diagnostics intent detected but explicit action intent found, keeping action_type='%s'",
                 action_type)
 
-        # Safety floor: if LLM chose actions but user didn't explicitly request
         if action_type in ("generate_bcm_commands", "reset_nodes"):
             if not (reset_regex.search(user_input) or generate_cmds_regex.search(user_input)):
                 logger.info("Orchestrator clamp: no explicit user action intent -> action_type='diagnostics_only'")
                 action_type = "diagnostics_only"
 
-        # === Conditional DGX RAG enrichment (reset-only) ===
+        # not implemented.
         dgx_guidance = ""
         if action_type in ("generate_bcm_commands", "reset_nodes") and dgx_rag:
             try:
@@ -770,12 +759,10 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             except Exception:
                 dgx_guidance = ""
 
-        # Compose analysis report (minimal)
         analysis_report = ("### Reasoning\n"
                            f"Detected action_type: {action_type}\n\n" + (reader_out[:1500] if reader_out else "") +
                            "\n\n" + dgx_guidance)
 
-        # If LLM returned a parsed object, keep it; otherwise synthesize a short JSON for traceability
         if decision_obj is None:
             try:
                 decision_obj = _json.loads(extracted_json.replace("'", '"'))
@@ -787,7 +774,6 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                     "focus": ""
                 }
 
-        # Minimal decision JSON
         decision_json_out = _json.dumps({
             "rationale": ["regex-based classification"],
             "action_needed": action_type != "diagnostics_only",
@@ -814,7 +800,6 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             logger.error("❌ summarize_results: Could not acquire LLM: %s", str(e))
             return {**state, "analysis": f"❌ Could not acquire LLM for summarization: {e}"}
 
-        # Get the detailed results and user question
         results = _truncate_text(state.get("results_text", ""), 100_000)
         question = state.get("input", "")
 
@@ -839,20 +824,16 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
         return {**state, "analysis": summary}
 
-    # ReAct agent removed in minimal workflow
-
     async def generate_commands(state: OrchestratorState):
         logger.info("generate_commands: Starting BCM command generation...")
         if not bcm_rag:
             logger.error("generate_commands: BCM RAG tool not available!")
             return {**state, "bcm_commands": "❌ BCM RAG tool not available"}
-        # Reacquire LLM only when needed
         try:
             reasoning_llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
         except Exception as e:
             return {**state, "bcm_commands": f"❌ Could not acquire LLM: {str(e)}"}
 
-        # 1) Retrieve BCM guidance (and use any DGX guidance already in state)
         try:
             bcm_docs = await asyncio.wait_for(
                 bcm_rag.ainvoke("Provide BCM cmsh-based procedures for DGX node reset/reimage, including exact command "
@@ -870,7 +851,6 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         analysis = state.get("analysis", "")
         results_text = state.get("results_text", "")
 
-        # Get requested nodes for constraint enforcement
         allowed_nodes = state.get("requested_nodes", [])
         allowed_nodes_str = ", ".join(allowed_nodes) if allowed_nodes else "(not specified)"
 
@@ -881,7 +861,7 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                    "DGX GUIDANCE:\n" + (dgx_guidance or "") + "\n\n"
                    "BCM DOCS:\n" + (bcm_docs or ""))
 
-        # 2) Ask LLM to produce rationale + commands
+        # Ask LLM to produce rationale + commands
         try:
             chain_for_cmds = commands_prompt | reasoning_llm | StrOutputParser()
             llm_out = await asyncio.wait_for(chain_for_cmds.ainvoke({"context": context}), timeout=LLM_STEP_TIMEOUT)
@@ -890,18 +870,17 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         except Exception as e:
             llm_out = f"CONTEXT:\n{context}\n\n[Error: {str(e)}]"
 
-        # Debug logging for LLM output
         logger.info("LLM generated BCM commands output:")
         logger.info("=" * 60)
         logger.info(llm_out)
         logger.info("=" * 60)
 
-        # 3) Extract only safe cmsh lines
+        # Extract only safe cmsh lines
         extracted = _extract_cmsh_commands(llm_out)
         if not extracted:
             return {**state, "bcm_commands": "❌ No valid cmsh commands extracted. Skipping execution."}
 
-        # 4) Filter and normalize commands
+        # Filter and normalize commands
         filtered = _filter_and_normalize(extracted, results_text, allowed_nodes)
         if not filtered:
             return {**state, "bcm_commands": "❌ No valid commands remaining after filtering. Skipping execution."}
@@ -938,11 +917,9 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         """Synthesize results for diagnostics-only requests (no command generation/execution)"""
         logger.info("synthesize_diagnostics_only: Starting synthesis...")
 
-        # Get the LLM-generated summary from the analysis
         llm_summary = state.get("analysis", "") or ""
         results_dir = state.get("results_dir", "N/A")
 
-        # Build clean output with just the intelligent summary
         final = ("# DGX Orchestration (Diagnostics Only)\n\n"
                  "## Assessment Summary\n" + llm_summary + "\n\n"
                  "## Notes\n"
@@ -954,7 +931,6 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
     # Always assess first, then branch
     def route_after_analysis(state: OrchestratorState):
-        # Always assess first, branch afterwards
         action_type = state.get("action_type", "diagnostics_only")
         logger.info("route_after_analysis: %s -> assess", action_type)
         return "assess"
@@ -966,8 +942,6 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             return "generate"
         logger.info("route_after_assess: %s -> summarize", action_type)
         return "summarize"
-
-    # No post-agent routing in minimal orchestrator
 
     # Build LangGraph with conditional routing
     graph = StateGraph(OrchestratorState)
@@ -981,10 +955,8 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
     graph.set_entry_point("analyze")
 
-    # Always route to assess first
     graph.add_conditional_edges("analyze", route_after_analysis, {"assess": "assess"})
 
-    # After assessment, branch to generate or summarize
     graph.add_conditional_edges("assess", route_after_assess, {
         "generate": "generate",
         "summarize": "summarize",
