@@ -57,15 +57,9 @@ for node_name, node in (g.get("nodes") or {}).items():
 
     inv["all"]["children"]["compute"]["hosts"][hostname] = {"ansible_host": ip}
 
-# Create inventory with plugin header for Ansible 2.19+ compatibility
-# Plugin header must come first for verify_file() to pass
-inventory_content = {"plugin": "yaml", "strict": True, "all": inv["all"]}
-
+# Create inventory as standard YAML format
 with open(os.path.join(outdir, "inventory.yml"), "w") as f:
-    # Write with explicit plugin header first
-    f.write("plugin: yaml\n")
-    f.write("strict: true\n")
-    yaml.safe_dump({"all": inv["all"]}, f, sort_keys=False)
+    yaml.safe_dump(inv, f, sort_keys=False)
 
 with open(os.path.join(outdir, "group_vars", "all.yml"), "w") as gf:
     yaml.safe_dump(
