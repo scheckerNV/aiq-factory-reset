@@ -1,0 +1,395 @@
+# This is the Schecker Test Cluster's Desired State Configuration
+# This is a YAML file that defines the desired state of the cluster
+
+metadata:
+  version: "1.0.0"
+  description: "Schecker Test Cluster Desired State"
+  created: "2025-01-26"
+  environment: "test"
+  cluster_name: "schecker-test-cluster"
+  total_nodes: 11
+
+# ==============================================================================
+# CLUSTER CONFIGURATION
+# ==============================================================================
+cluster:
+  name: "schecker-test-cluster"
+  type: "Test_Cluster"
+  location: "virtualized-environment"
+
+  # Head Node Configuration
+  head_node:
+    enabled: true
+    hostname: "schecker-test-cluster"
+    management_ip: "10.141.255.254"
+    external_ip: "192.168.200.148"
+    mac_address: "FA:16:3E:22:16:50"
+    domain: "cluster.local"
+    default_image: "default-cluster-image"
+
+# ==============================================================================
+# NETWORK FABRIC DEFINITIONS
+# ==============================================================================
+network_fabrics:
+  # Management Network (Internal)
+  management:
+    name: "internalnet"
+    aliases: ["managementnet"]
+    subnet: "10.141.0.0/16"
+    gateway: "10.141.255.254"
+    dns_servers: ["127.0.0.53", "192.168.200.254"]
+    usable_range: "10.141.0.1-254"
+    description: "Internal cluster management network"
+
+  # External Network
+  external:
+    name: "externalnet"
+    aliases: ["publicnet"]
+    subnet: "192.168.200.0/24"
+    gateway: "192.168.200.254"
+    dns_servers: ["192.168.200.254"]
+    usable_range: "192.168.200.1-253"
+    description: "External connectivity network"
+
+  # Global Network (Control Plane)
+  global:
+    name: "globalnet"
+    aliases: ["controlnet"]
+    subnet: "0.0.0.0/0"
+    gateway: null
+    description: "Global routing network"
+
+# ==============================================================================
+# COMPUTE NODE DEFINITIONS (10 nodes)
+# ==============================================================================
+nodes:
+  # Standard references for all compute nodes
+  node_power: &node_power
+    desired_state: "on"
+    power_policy: "restore_previous"
+    auto_power_on: true
+
+  node_software: &node_software
+    os_image: "cluster-os-latest"
+    kernel_version: "latest"
+    container_runtime: "docker"
+    cluster_enrolled: true
+    monitoring_enabled: true
+
+  node_health: &node_health
+    temperature_thresholds:
+      cpu_critical: 85
+      cpu_warning: 75
+    memory_thresholds:
+      memory_usage_critical: 95
+      memory_usage_warning: 85
+    network_thresholds:
+      connectivity_timeout: "5s"
+      max_packet_loss: 0.01
+
+  # Compute Nodes (node001 through node010)
+  node001:
+    hostname: "node001"
+    model: "Virtual_Node"
+    serial_number: "VIRT_001"
+    networks:
+      management:
+        ip: "10.141.0.1"
+        mac: "FA:16:3E:A5:57:C2"
+        interface: "ens3"
+        gateway: "10.141.255.254"
+        dns: ["127.0.0.53"]
+    power: *node_power
+    software: *node_software
+    health: *node_health
+
+  node002:
+    hostname: "node002"
+    model: "Virtual_Node"
+    serial_number: "VIRT_002"
+    networks:
+      management:
+        ip: "10.141.0.2"
+        mac: "FA:16:3E:15:9C:C5"
+        interface: "ens3"
+        gateway: "10.141.255.254"
+        dns: ["127.0.0.53"]
+    power: *node_power
+    software: *node_software
+    health: *node_health
+
+  node003:
+    hostname: "node003"
+    model: "Virtual_Node"
+    serial_number: "VIRT_003"
+    networks:
+      management:
+        ip: "10.141.0.3"
+        mac: "FA:16:3E:3A:0B:11"
+        interface: "ens3"
+        gateway: "10.141.255.254"
+        dns: ["127.0.0.53"]
+    power: *node_power
+    software: *node_software
+    health: *node_health
+
+  node004:
+    hostname: "node004"
+    model: "Virtual_Node"
+    serial_number: "VIRT_004"
+    networks:
+      management:
+        ip: "10.141.0.4"
+        mac: "FA:16:3E:38:8B:AE"
+        interface: "ens3"
+        gateway: "10.141.255.254"
+        dns: ["127.0.0.53"]
+    power: *node_power
+    software: *node_software
+    health: *node_health
+
+  node005:
+    hostname: "node005"
+    model: "Virtual_Node"
+    serial_number: "VIRT_005"
+    networks:
+      management:
+        ip: "10.141.0.5"
+        mac: "FA:16:3E:EB:E1:4A"
+        interface: "ens3"
+        gateway: "10.141.255.254"
+        dns: ["127.0.0.53"]
+    power: *node_power
+    software: *node_software
+    health: *node_health
+
+  node006:
+    hostname: "node006"
+    model: "Virtual_Node"
+    serial_number: "VIRT_006"
+    networks:
+      management:
+        ip: "10.141.0.6"
+        mac: "FA:16:3E:C6:49:08"
+        interface: "ens3"
+        gateway: "10.141.255.254"
+        dns: ["127.0.0.53"]
+    power: *node_power
+    software: *node_software
+    health: *node_health
+
+  node007:
+    hostname: "node007"
+    model: "Virtual_Node"
+    serial_number: "VIRT_007"
+    networks:
+      management:
+        ip: "10.141.0.7"
+        mac: "FA:16:3E:9E:E2:7C"
+        interface: "ens3"
+        gateway: "10.141.255.254"
+        dns: ["127.0.0.53"]
+    power: *node_power
+    software: *node_software
+    health: *node_health
+
+  node008:
+    hostname: "node008"
+    model: "Virtual_Node"
+    serial_number: "VIRT_008"
+    networks:
+      management:
+        ip: "10.141.0.8"
+        mac: "FA:16:3E:36:4A:18"
+        interface: "ens3"
+        gateway: "10.141.255.254"
+        dns: ["127.0.0.53"]
+    power: *node_power
+    software: *node_software
+    health: *node_health
+
+  node009:
+    hostname: "node009"
+    model: "Virtual_Node"
+    serial_number: "VIRT_009"
+    networks:
+      management:
+        ip: "10.141.0.9"
+        mac: "FA:16:3E:E6:AF:07"
+        interface: "ens3"
+        gateway: "10.141.255.254"
+        dns: ["127.0.0.53"]
+    power: *node_power
+    software: *node_software
+    health: *node_health
+
+  node010:
+    hostname: "node010"
+    model: "Virtual_Node"
+    serial_number: "VIRT_010"
+    networks:
+      management:
+        ip: "10.141.0.10"
+        mac: "FA:16:3E:8C:B3:83"
+        interface: "ens3"
+        gateway: "10.141.255.254"
+        dns: ["127.0.0.53"]
+    power: *node_power
+    software: *node_software
+    health: *node_health
+    status:
+      current_state: "down"
+      issues: ["booting timeout reached: 5m", "power reset count reached: 5"]
+
+# ==============================================================================
+# INFRASTRUCTURE COMPONENTS
+# ==============================================================================
+infrastructure:
+  # Head Node Services
+  head_node_services:
+    cluster_management:
+      hostname: "schecker-test-cluster"
+      management_ip: "10.141.255.254"
+      external_ip: "192.168.200.148"
+      services:
+        - "cluster_manager"
+        - "nfs_server"
+        - "ldap_server"
+        - "dns_server"
+        - "dhcp_server"
+        - "monitoring"
+
+  # Network Infrastructure (Virtualized)
+  virtualization:
+    platform: "openstack"
+    network_type: "virtual_ethernet"
+    description: "Virtualized test environment"
+
+# ==============================================================================
+# CLUSTER-WIDE POLICIES
+# ==============================================================================
+policies:
+  # Node Management
+  node_management:
+    boot_timeout: "5m"
+    max_power_resets: 5
+    connectivity_check_interval: "60s"
+    auto_recovery: true
+
+  # Network Policies
+  network:
+    ethernet:
+      mtu: 1500
+      spanning_tree_enabled: false
+      monitoring_enabled: true
+      connectivity_threshold: "1s"
+
+  # Health Monitoring
+  monitoring:
+    health_check_interval: "30s"
+    cluster_health_threshold: 0.90
+    node_isolation_threshold: 2
+    alert_escalation_time: "10m"
+
+# ==============================================================================
+# AUTOMATION WORKFLOWS
+# ==============================================================================
+automation:
+  # Node Lifecycle Management
+  node_lifecycle:
+    provision:
+      - "power_on"
+      - "network_check"
+      - "os_boot"
+      - "service_start"
+      - "health_check"
+
+    recovery:
+      - "assess_node_state"
+      - "power_cycle"
+      - "network_reset"
+      - "service_restart"
+      - "health_validation"
+
+  # Cluster Operations
+  cluster_operations:
+    connectivity_test:
+      interval: "10m"
+      timeout: "5s"
+      max_retries: 3
+
+# ==============================================================================
+# SECURITY CONFIGURATION
+# ==============================================================================
+security:
+  authentication:
+    method: "local"
+    domain: "cluster.local"
+
+  access_control:
+    admin_groups:
+      - "cluster_admins"
+    user_groups:
+      - "cluster_users"
+
+  network_security:
+    internal_only: true
+    external_access_restricted: true
+
+# ==============================================================================
+# OPERATIONAL PROCEDURES
+# ==============================================================================
+procedures:
+  node_recovery:
+    trigger_conditions:
+      - "boot_timeout"
+      - "connectivity_loss"
+      - "service_failure"
+    recovery_steps:
+      1: "diagnose_issue"
+      2: "attempt_power_cycle"
+      3: "network_reset"
+      4: "manual_intervention"
+
+  cluster_maintenance:
+    maintenance_window:
+      day: "sunday"
+      start_time: "02:00"
+      duration_hours: 4
+
+  capacity_planning:
+    current_capacity:
+      total_nodes: 11
+      active_nodes: 10
+      down_nodes: 1
+    monitoring_metrics:
+      - "node_availability"
+      - "network_latency"
+      - "service_status"
+
+# ==============================================================================
+# CURRENT CLUSTER STATE
+# ==============================================================================
+current_status:
+  timestamp: "2025-08-26T20:34:35+02:00"
+
+  cluster_health:
+    total_devices: 11
+    active_devices: 10
+    down_devices: 1
+    overall_status: "degraded"
+
+  network_status:
+    networks_configured: 3
+    connectivity_ok: 1068
+    connectivity_errors: 32
+    average_latency: "451.21us"
+
+  services:
+    cmdaemon:
+      version: "3.1"
+      status: "active"
+      uptime: "1h 11m"
+      sessions_active: 18
+      cpu_usage: "1.2%"
+      memory_usage: "175MB"

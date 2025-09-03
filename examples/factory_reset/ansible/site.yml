@@ -1,0 +1,92 @@
+---
+- name: Network remediation with nmstate (tagged)
+  hosts: compute
+  gather_facts: false
+  any_errors_fatal: true
+  serial: 1
+  vars:
+    nm_checkpoint_timeout: 120
+  pre_tasks:
+    - name: Gather minimal facts (network only)
+      ansible.builtin.setup:
+        gather_subset:
+          - network
+      tags: [gather_facts_net]
+
+    - name: Show current network config (for validation)
+      ansible.builtin.command: ip addr show
+      register: current_config
+      changed_when: false
+      tags: [validate_current]
+
+  tasks:
+    - name: Network configuration block with rollback protection
+      block:
+        - name: Create NetworkManager checkpoint
+          ansible.builtin.command: nmcli general checkpoint {{ nm_checkpoint_timeout }}
+          register: nm_checkpoint
+          changed_when: "'created' in nm_checkpoint.stderr or nm_checkpoint.rc == 0"
+          failed_when: false
+          tags: [rollback_checkpoint, apply_nmstate]
+
+        - name: Configure network interface with nmcli
+          ansible.builtin.shell: >
+            nmcli connection modify "{{ item.name }}"
+            ipv4.method manual
+            ipv4.addresses "{{ item.ipv4.address[0].ip }}/{{ item.ipv4.address[0]['prefix-length'] }}"
+            ipv4.gateway "{{ item.ipv4.gateway }}"
+            ipv4.dns "{{ item.ipv4.dns | join(',') }}" 2>/dev/null ||
+            nmcli connection add type ethernet
+            con-name "{{ item.name }}"
+            ifname "{{ item.name }}"
+            ipv4.method manual
+            ipv4.addresses "{{ item.ipv4.address[0].ip }}/{{ item.ipv4.address[0]['prefix-length'] }}"
+            ipv4.gateway "{{ item.ipv4.gateway }}"
+            ipv4.dns "{{ item.ipv4.dns | join(',') }}"
+          loop: "{{ nmstate_desired.interfaces }}"
+          when: item.type == "ethernet" and item.ipv4.enabled
+          register: nm_apply
+          changed_when: nm_apply.rc == 0
+          tags: [configure_interfaces, configure_bonds, configure_vlans, apply_nmstate]
+
+        - name: Reload NetworkManager connections
+          ansible.builtin.command: nmcli connection reload
+          when: nm_apply is changed
+          changed_when: false
+          tags: [reload_network]
+
+        - name: Activate network connections
+          ansible.builtin.command: nmcli connection up "{{ item.name }}"
+          loop: "{{ nmstate_desired.interfaces }}"
+          when: item.type == "ethernet" and item.state == "up" and nm_apply is changed
+          changed_when: false
+          tags: [reload_network]
+
+        - name: Connectivity check - ping gateway
+          ansible.builtin.command: ping -c1 -W1 {{ mgmt_gateway }}
+          register: ping_gw
+          changed_when: false
+          tags: [connectivity_check]
+
+        - name: Connectivity check - DNS query
+          ansible.builtin.command: getent ahosts {{ (dns_servers | first) | default('127.0.0.1') }}
+          register: dns_chk
+          changed_when: false
+          tags: [connectivity_check]
+
+      rescue:
+        - name: Rollback checkpoint on failure
+          ansible.builtin.command: nmcli general rollback
+          ignore_errors: true
+          tags: [rollback_checkpoint]
+
+        - name: Fail play after rollback
+          ansible.builtin.fail:
+            msg: "Network changes failed; checkpoint rolled back."
+
+      always:
+        - name: Show applied network config (post)
+          ansible.builtin.command: ip addr show
+          register: config_post
+          changed_when: false
+          tags: [validate_current]

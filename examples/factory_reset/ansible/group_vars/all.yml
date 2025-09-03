@@ -1,0 +1,11 @@
+cluster_name: schecker-test-cluster
+dns_servers:
+- 127.0.0.53
+- 192.168.200.254
+mgmt_gateway: 10.141.255.254
+nm_checkpoint_timeout: 120
+
+# Ansible connectivity settings
+ansible_user: root
+ansible_python_interpreter: /usr/bin/python3
+ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
