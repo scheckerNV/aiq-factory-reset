@@ -28,7 +28,7 @@ functions:
     _type: aiq_dgx_factory_reset/network_results_reader
     cluster_host: "localhost"  # Same as assessment tool
     cluster_user: "root"  # Same as assessment tool
-    results_directory: "/tmp/network_assessment_*"  # Where assessment saves results
+    results_directory: "/tmp/node_assessment_*"  # Use existing node assessment results
 
   # Network Config Extractor (required dependency)
   network_config_extractor:

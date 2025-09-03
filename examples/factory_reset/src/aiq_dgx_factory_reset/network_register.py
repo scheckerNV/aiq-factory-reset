@@ -108,19 +108,7 @@ async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder:
 
             if returncode == 0:
                 s_out = stdout.decode('utf-8', errors="replace")
-                # Extract results directory from output
-                outdir = None
-                m = re.search(r"(/tmp/network_assessment_[0-9_]+)", s_out)
-                if m:
-                    outdir = m.group(1)
-                    # Create symlink for easy discovery
-                    try:
-                        if os.path.islink("/tmp/network_assessment_latest") or os.path.exists(
-                                "/tmp/network_assessment_latest"):
-                            os.unlink("/tmp/network_assessment_latest")
-                        os.symlink(outdir, "/tmp/network_assessment_latest")
-                    except Exception:
-                        pass
+                # Network assessment results will be available via existing node assessment symlink
 
                 location = "locally" if config.cluster_host == "localhost" else "on cluster"
                 return f"""✅ Network assessment completed successfully!
@@ -128,8 +116,8 @@ async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder:
 📋 Assessment Output:
 {s_out}
 
-📁 Results saved {location}""" + (f" in: {outdir}\n" if outdir else " in timestamped directory.\n"
-                                 ) + """Use the network_results_reader tool to analyze the results.
+📁 Results saved {location} and available via existing node assessment symlink.
+Use the network_results_reader tool to analyze the results.
 
 🔍 Next steps:
 1. Use network_results_reader to parse the assessment data
@@ -213,20 +201,17 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                 latest_dir = explicit
                 logger.info(f"Using explicit directory from query: {latest_dir}")
             else:
-                # 2. Try stable symlink first
+                # 2. Use existing node assessment symlink (created by DGX agent)
                 if config.cluster_host == "localhost":
-                    import glob as _glob
                     import os
-                    symlink_path = "/tmp/network_assessment_latest"
+
+                    # Use the existing node assessment symlink that already exists
+                    symlink_path = "/tmp/node_assessment_latest"
                     if os.path.exists(symlink_path) and os.path.isdir(symlink_path):
                         latest_dir = symlink_path
-                        logger.info(f"Using stable symlink: {latest_dir}")
+                        logger.info(f"Using existing node assessment symlink: {latest_dir}")
                     else:
-                        # Use glob to find latest directory
-                        matches = sorted(_glob.glob(config.results_directory), reverse=True)
-                        latest_dir = matches[0] if matches else None
-                        if latest_dir:
-                            logger.info(f"Found latest directory via glob: {latest_dir}")
+                        logger.warning("No node assessment symlink found. Run node assessment first.")
                 else:
                     # Check remote symlink
                     symlink_cmd = [
