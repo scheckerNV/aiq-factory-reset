@@ -218,7 +218,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
 
 print("✅ BCM Documentation RAG function registered successfully")
 
-
 # ========================
 # Human-in-the-Loop (HITL) Approval and BCM Command Executor
 # ========================
@@ -388,3 +387,11 @@ async def code_execution_with_approval(config: CodeExecutionWithApprovalConfig, 
 
 
 print("✅ BCM Code Execution with Approval tool registered successfully")
+
+# Import networking and DGX modules to ensure all functions are registered
+try:
+    from . import dgx_register  # noqa: F401
+    from . import network_register  # noqa: F401
+    print("✅ Network and DGX tools registered successfully")
+except Exception as e:
+    print(f"⚠️ Additional tools not loaded: {e}")
