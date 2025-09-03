@@ -430,7 +430,7 @@ Command rules:
   set installmode FULL; commit; reboot).
 - If reinstall/reimage is required and the image name isn't known from CONTEXT, first discover it
   (e.g., cmsh -c "device use <node>; show softwareimage") or select a valid image shown in CONTEXT.
-- Include per-node verification (e.g., show, dcgm) after corrective actions.
+- Include per-node verification after corrective actions.
 - Avoid cluster-wide changes; scope actions to affected nodes only.
 - Example sequence for power-on: cmsh -c "device; device use <node>; show"; cmsh -c "device; device use <node>; power on"; cmsh -c "device; device use <node>; show"
 - If all nodes are healthy AND no explicit action requested, output no commands in the Commands section.
