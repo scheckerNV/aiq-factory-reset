@@ -92,42 +92,6 @@ def _extract_cmsh_commands(text: str) -> list[str]:
 
 
 # ========================
-# DGX Documentation RAG Tool
-# ========================
-
-
-class DGXExpertRAGConfig(FunctionBaseConfig, name="dgx_expert_rag"):
-    """Search DGX documentation using accurate RAG retrieval"""
-
-    docs_path: str = Field(
-        default="examples/factory_reset/src/aiq_dgx_factory_reset/docs/dgx_expert",
-        description="Path to DGX documentation directory",
-    )
-    persist_dir: str = Field(
-        default="examples/factory_reset/storage/dgx_index",
-        description="Directory to persist the vector index",
-    )
-    similarity_top_k: int = Field(default=5, description="Top-K chunks to retrieve")
-    response_mode: str = Field(default="tree_summarize", description="Response synthesis mode")
-    nvidia_api_key: str = Field(default="", description="NVIDIA API key (or set NVIDIA_API_KEY env var)")
-    llama_cloud_api_key: str = Field(default="", description="LlamaCloud API key for PDF parsing (optional)")
-
-
-@register_function(config_type=DGXExpertRAGConfig)
-async def dgx_expert_rag(config: DGXExpertRAGConfig, _builder: Builder):  # noqa: ARG001
-
-    async def _search_dgx_docs(query: str) -> str:
-        # Minimal mode: disable heavy RAG to avoid blocking and complexity during bring-up
-        return ("DGX Documentation RAG disabled (minimal workflow mode).\n"
-                f"Query: {query}")
-
-    yield FunctionInfo.from_fn(_search_dgx_docs,
-                               description="DGX hardware operational guidance and procedures (RAG over DGX docs)")
-
-
-print("✅ DGX Expert RAG tool registered successfully")
-
-# ========================
 # DGX Node Assessment Tool
 # ========================
 
@@ -547,12 +511,10 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
     try:
         node_assess = builder.get_function("node_assessment_tool")
         node_reader = builder.get_function("node_results_reader")
-        dgx_rag = builder.get_function("dgx_expert_rag")
         bcm_rag = builder.get_function("bcm_documentation_rag")
     except Exception:
         node_assess = None
         node_reader = None
-        dgx_rag = None
         bcm_rag = None
 
     try:
@@ -586,7 +548,6 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         assessment: str
         analysis: str
         react_agent_output: str
-        dgx_guidance: str
         bcm_commands: str
         execution_result: str
         final_output: str
@@ -764,23 +725,9 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                 logger.info("Orchestrator clamp: no explicit user action intent -> action_type='diagnostics_only'")
                 action_type = "diagnostics_only"
 
-        # === Conditional DGX RAG enrichment (reset-only) ===
-        dgx_guidance = ""
-        if action_type in ("generate_bcm_commands", "reset_nodes") and dgx_rag:
-            try:
-                dgx_guidance = await asyncio.wait_for(
-                    dgx_rag.ainvoke("DGX node reset prerequisites and best practices for H100-based SuperPOD."),
-                    timeout=LLM_STEP_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                dgx_guidance = "❌ DGX guidance RAG timed out"
-            except Exception:
-                dgx_guidance = ""
-
         # Compose analysis report (minimal)
         analysis_report = ("### Reasoning\n"
-                           f"Detected action_type: {action_type}\n\n" + (reader_out[:1500] if reader_out else "") +
-                           "\n\n" + dgx_guidance)
+                           f"Detected action_type: {action_type}\n\n" + (reader_out[:1500] if reader_out else ""))
 
         # If LLM returned a parsed object, keep it; otherwise synthesize a short JSON for traceability
         if decision_obj is None:
@@ -872,7 +819,6 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         except Exception as e:
             bcm_docs = f"❌ BCM guidance error: {str(e)}"
 
-        dgx_guidance = state.get("dgx_guidance", "")
         assessment = state.get("assessment", "")
         analysis = state.get("analysis", "")
         results_text = state.get("results_text", "")
@@ -885,7 +831,6 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
                    "ASSESSMENT:\n" + (assessment or "") + "\n\n"
                    "RESULTS (parsed files):\n" + (results_text or "") + "\n\n"
                    "ANALYSIS:\n" + (analysis or "") + "\n\n"
-                   "DGX GUIDANCE:\n" + (dgx_guidance or "") + "\n\n"
                    "BCM DOCS:\n" + (bcm_docs or ""))
 
         # 2) Ask LLM to produce rationale + commands
@@ -1012,7 +957,6 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
             "assessment": "",
             "analysis": "",
             "react_agent_output": "",
-            "dgx_guidance": "",
             "bcm_commands": "",
             "execution_result": "",
             "final_output": "",
