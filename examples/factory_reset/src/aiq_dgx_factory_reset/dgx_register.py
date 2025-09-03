@@ -39,7 +39,7 @@ def _truncate_text(text: str, limit: int = MAX_FILE_READ_CHARS) -> str:
     return text[:limit] + "\n...[truncated]...\n"
 
 
-ANSI_ESCAPE = re.compile(r'\x1B[[0-?][ -/][@-~]')
+ANSI_ESCAPE = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
 
 
 def _strip_ansi(text: str) -> str:
@@ -67,6 +67,9 @@ def _extract_cmsh_commands(text: str) -> list[str]:
             in_code_block = not in_code_block
             continue
 
+        if in_code_block:
+            continue
+
         if not line:
             continue
 
@@ -75,7 +78,7 @@ def _extract_cmsh_commands(text: str) -> list[str]:
         if line.startswith('`') and line.endswith('`') and len(line) > 2:
             line = line[1:-1].strip()
 
-        line = line.replace('"', '"').replace('"', '"').replace("'", "'").replace("'", "'")
+        line = (line.replace('"', '"').replace('"', '"').replace(''', "'").replace(''', "'"))
 
         cmsh_pattern = re.compile(r'^cmsh\s+-c\s+["\']([^"\']+)["\']', re.IGNORECASE)
         match = cmsh_pattern.match(line)
@@ -408,6 +411,10 @@ DEFAULT_COMMANDS_PROMPT = """You are a Bright Cluster Manager (BCM) SRE. Using t
 3) Use actual node and image names from CONTEXT. Do not invent values or use placeholders.
    If a value is unknown, first emit a discovery command (e.g., show softwareimage) and only then
    the corrective command that uses the discovered value.
+4) If USER_REQUEST explicitly asks to power on/reset/reboot specific nodes in ALLOWED_NODES, generate
+   the minimal, safe sequence even if health data is missing or inconclusive. Start with discovery/verification
+   (show) → action (power on/reset) → verification (show).
+5) If health is unknown but intent is explicit, do NOT omit commands; include discovery steps to confirm state.
 
 Output format (must match exactly):
 - First print a section header: Rationale:
@@ -425,7 +432,8 @@ Command rules:
   (e.g., cmsh -c "device use <node>; show softwareimage") or select a valid image shown in CONTEXT.
 - Include per-node verification (e.g., show, dcgm) after corrective actions.
 - Avoid cluster-wide changes; scope actions to affected nodes only.
-- If all nodes are healthy, output no commands in the Commands section.
+- Example sequence for power-on: cmsh -c "device; device use <node>; show"; cmsh -c "device; device use <node>; power on"; cmsh -c "device; device use <node>; show"
+- If all nodes are healthy AND no explicit action requested, output no commands in the Commands section.
 
 CONTEXT
 ---
@@ -474,8 +482,10 @@ def _filter_and_normalize(cmds: list[str], results_text: str, allowed_nodes: lis
         # Enforce allowed nodes if provided
         if allowed_nodes:
             node_found = any(f"device use {node}" in c for node in allowed_nodes)
-            if not node_found and not c.startswith('cmsh -c "device; list') and not c.startswith(
-                    'cmsh -c "device; show"'):
+            is_discovery = ('; show' in c or c.startswith('cmsh -c "device; list')
+                            or c.startswith('cmsh -c "device; show') or c.startswith('cmsh -c "softwareimage; list')
+                            or c.startswith('cmsh -c "softwareimage; show'))
+            if not node_found and not is_discovery:
                 logger.info("Filtered out non-allowed node command: %s", original_cmd)
                 continue
 
@@ -642,14 +652,15 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
 
         # === Determine results detail level based on user input ===
         user_input = (state.get("input", "") or "").lower()
-        results_query = "summary"  # default
+        results_query = "overview"  # default to overview for better status visibility
 
         if any(term in user_input for term in ["full", "all", "detailed", "everything", "complete"]):
             results_query = "full"
-        elif any(term in user_input for term in ["overview", "cluster health", "burn configs"]):
+        elif any(term in user_input for term in [
+                "overview", "cluster health", "burn configs", "state", "status", "current", "what", "show", "list",
+                "down", "power on", "power-on", "reboot", "reset", "start", "boot"
+        ]):
             results_query = "overview"
-        elif any(term in user_input for term in ["state", "status", "current", "what", "show", "list"]):
-            results_query = "overview"  # More detailed than summary for status queries
 
         # Store results query in state for use in assess_node
         state["results_query"] = results_query
@@ -827,7 +838,10 @@ async def dgx_orchestrator(config: DGXOrchestratorConfig, builder: Builder):
         allowed_nodes = state.get("requested_nodes", [])
         allowed_nodes_str = ", ".join(allowed_nodes) if allowed_nodes else "(not specified)"
 
-        context = ("ALLOWED_NODES:\n" + allowed_nodes_str + "\n\n"
+        # Include user request so LLM sees explicit intent
+        user_req = state.get("input", "") or ""
+        context = ("USER_REQUEST:\n" + user_req + "\n\n"
+                   "ALLOWED_NODES:\n" + allowed_nodes_str + "\n\n"
                    "ASSESSMENT:\n" + (assessment or "") + "\n\n"
                    "RESULTS (parsed files):\n" + (results_text or "") + "\n\n"
                    "ANALYSIS:\n" + (analysis or "") + "\n\n"
