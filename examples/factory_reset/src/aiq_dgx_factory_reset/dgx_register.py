@@ -390,7 +390,7 @@ class DGXOrchestratorConfig(FunctionBaseConfig, name="dgx_orchestrator"):
     reasoning_llm_name: str = Field(description="LLM used for reasoning and planning")
     react_agent_fn: str = Field(default="dgx_react_agent", description="Registered ReAct agent function name to wrap")
     executor_fn: str = Field(
-        default="code_execution_with_approval",
+        default="bcm_executor",
         description="Registered executor function name for BCM commands (code_execution_with_approval)",
     )
     verbose: bool = Field(default=False, description="Enable extra logging")
