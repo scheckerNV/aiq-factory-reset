@@ -11,12 +11,6 @@ functions:
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
     persist_dir: "examples/factory_reset/storage/bcm_index"
 
-  # DGX Expert RAG Tool with LlamaParse and Multi-Agent Workflow
-  dgx_expert_rag:
-    _type: aiq_dgx_factory_reset/dgx_expert_rag
-    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/dgx_expert"
-    persist_dir: "examples/factory_reset/storage/dgx_index"
-
   # Assess state of nodes in cluster
   node_assessment_tool:
     _type: aiq_dgx_factory_reset/node_assessment_tool
@@ -47,7 +41,6 @@ functions:
   dgx_react_agent:
     _type: react_agent
     tool_names:
-      - dgx_expert_rag
       - bcm_documentation_rag
       - node_assessment_tool
       - node_results_reader
