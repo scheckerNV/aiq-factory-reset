@@ -1,91 +1,108 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
+# Sample configuration for LangGraph Network Orchestrator
+# Replace with your actual cluster details and API keys
 
 general:
   use_uvloop: true
 
 functions:
-  # BCM Documentation RAG Tool with LlamaParse and Multi-Agent Workflow
-  bcm_documentation_rag:
-    _type: aiq_dgx_factory_reset/bcm_documentation_rag
-    max_tokens: 8192
-    response_mode: "tree_summarize"
-    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
-    persist_dir: "examples/factory_reset/storage/bcm_index"
+  # Main LangGraph Network Orchestrator
+  network_orchestrator:
+    _type: aiq_dgx_factory_reset/network_orchestrator
+    reasoning_llm_name: reasoning_llm
+    executor_fn: code_execution_with_approval
+    include_llm_rationale: true
+    include_prompts_in_output: false  # Set to true for debugging
+    # Optional: override prompts
+    # commands_prompt: "Your custom command generation prompt..."
+    # commands_prompt_path: "/path/to/custom/prompt.txt"
 
-  networking_expert_rag:
-    _type: aiq_dgx_factory_reset/networking_expert_rag
-    max_tokens: 8192
-    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert"
-    persist_dir: "examples/factory_reset/storage/networking_index"
-
+  # Network Assessment Tool (required dependency)
   network_assessment_tool:
     _type: aiq_dgx_factory_reset/network_assessment_tool
-    cluster_host: "localhost"
-    cluster_user: "root"
+    cluster_host: "localhost"  # Replace with your cluster IP/hostname
+    cluster_user: "root"  # Replace with your SSH username
     timeout: 300
 
+  # Network Results Reader (required dependency)
   network_results_reader:
     _type: aiq_dgx_factory_reset/network_results_reader
-    cluster_host: "localhost"
-    cluster_user: "root"
-    results_directory: "/tmp/cluster_assessment_*"
+    cluster_host: "localhost"  # Same as assessment tool
+    cluster_user: "root"  # Same as assessment tool
+    results_directory: "/tmp/network_assessment_*"  # Where assessment saves results
 
+  # Network Config Extractor (required dependency)
+  network_config_extractor:
+    _type: aiq_dgx_factory_reset/network_config_extractor
+    networking_docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert"
+
+  # BCM Documentation RAG (required dependency)
+  bcm_documentation_rag:
+    _type: aiq_dgx_factory_reset/bcm_documentation_rag
+    docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
+    persist_dir: "examples/factory_reset/storage/bcm_index"
+    similarity_top_k: 5
+    response_mode: "tree_summarize"
+    nvidia_api_key: ""  # Set NVIDIA_API_KEY env var or provide here
+    llama_cloud_api_key: ""  # Set LLAMA_CLOUD_API_KEY env var or provide here
+
+  network_ansible_plan:
+    _type: aiq_dgx_factory_reset/network_ansible_plan
+    reasoning_llm_name: reasoning_llm
+    allowed_tags:
+      - gather_facts_net
+      - validate_current
+      - configure_interfaces
+      - configure_bonds
+      - configure_vlans
+      - apply_nmstate
+      - reload_network
+      - connectivity_check
+      - rollback_checkpoint
+    required_tags:
+      - connectivity_check
+    default_checkpoint_timeout: 120
+
+  ansible_executor:
+    _type: aiq_dgx_factory_reset/ansible_executor
+    inventory_path: "/root/aiq-factory-reset/examples/factory_reset/ansible/inventory.yml"
+    playbook_path: "/root/aiq-factory-reset/examples/factory_reset/ansible/site.yml"
+    ansible_bin: "ansible-playbook"
+    hitl_approval_fn: hitl_code_approval
+    timeout: 1800
+    env_disable_hostkey_check: true
+
+  # Code Execution with Approval (required dependency)
+  code_execution_with_approval:
+    _type: aiq_dgx_factory_reset/code_execution_with_approval
+    cluster_host: "localhost"  # Same as network tools
+    cluster_user: "root"  # Same as network tools
+    timeout: 600
+    dry_run: true  # Set to false for live execution (DANGEROUS!)
+    coder_llm_name: reasoning_llm  # Optional: LLM validation of commands
+    hitl_approval_fn: hitl_code_approval
+
+  # Human-in-the-Loop Approval (required by code_execution_with_approval)
   hitl_code_approval:
     _type: aiq_dgx_factory_reset/hitl_code_approval
-    prompt: "🔧 FACTORY RESET EXECUTION - Review these BCM commands that will be executed on schecker-testcluster"
-
-  bcm_executor:
-    _type: aiq_dgx_factory_reset/code_execution_with_approval
-    cluster_host: "localhost"        # if AIQ runs on the cluster head
-    cluster_user: "root"
-    timeout: 600
-    dry_run: false                    # switch to false when ready
-    hitl_approval_fn: hitl_code_approval
-    # coder_llm_name: qwen_coder     # optional, only if you add this LLM in `llms:`
-
-  network_factory_reset_orchestrator:
-    _type: aiq_dgx_factory_reset/network_factory_reset_orchestrator
-    perform_post_validation: true
-
-  #  network_workflow_orchestrator:
-  #   _type: aiq_dgx_factory_reset/network_workflow_orchestrator
-  #   max_retries: 1
-  #   quality_threshold: 0.2
-
-  # networking_graph_agent:
-  #   _type: react_agent
-  #   tool_names:
-  #     - network_workflow_orchestrator  # Uses LangGraph internally
-  #   llm_name: reasoning_llm
-
-  networking_react_agent:
-    _type: react_agent
-    tool_names:
-      - networking_expert_rag
-      - bcm_documentation_rag
-      - network_assessment_tool
-      - network_results_reader
-      - hitl_code_approval
-      - bcm_executor
-    llm_name: execution_llm
-    verbose: true
-    parse_agent_response_max_retries: 3
-    retry_agent_response_parsing_errors: true
+    prompt: "⚠️ NETWORK FACTORY RESET ⚠️\n\nPlease review the following BCM networking commands carefully:"
 
 llms:
-  # Reasoning LLM
   reasoning_llm:
     _type: nim
     model_name: meta/llama-3.1-70b-instruct
-    max_tokens: 8192
+    max_tokens: 4096
     temperature: 0.1
 
-  execution_llm:
-    _type: nim
-    model_name: meta/llama-3.1-70b-instruct
-    max_tokens: 8192
-    temperature: 0.1
-
+# Set your main workflow to use the new orchestrator
 workflow:
-  _type: aiq_dgx_factory_reset/network_factory_reset_orchestrator
+  _type: aiq_dgx_factory_reset/network_orchestrator
+  reasoning_llm_name: reasoning_llm
+  executor_fn: code_execution_with_approval
+  include_llm_rationale: true
+  include_prompts_in_output: false
+
+# Environment variables you need to set:
+# export NVIDIA_API_KEY="your-nvidia-api-key"
+# export LLAMA_CLOUD_API_KEY="your-llama-cloud-api-key"
+# export CLUSTER_HOST="your-cluster-headnode"
+# export CLUSTER_USER="your-ssh-username"
