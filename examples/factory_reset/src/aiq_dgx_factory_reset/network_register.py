@@ -1,7 +1,7 @@
 """
 Network Factory Reset Tools: LangGraph-based networking orchestrator and tools
 
-Implements network assessment, configuration extraction, BCM command generation,
+Implements network assessment, configuration extraction,
 and Ansible-based network automation for factory reset scenarios.
 """
 
@@ -59,16 +59,13 @@ async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder:
             script_content = f.read()
 
         try:
-            # Upload and execute the script
             with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
                 f.write(script_content)
                 script_path = f.name
 
-            # Make executable
             os.chmod(script_path, 0o755)
 
             if config.cluster_host == "localhost":
-                # Execute locally
                 cmd = [script_path]
                 proc = await asyncio.create_subprocess_exec(*cmd,
                                                             stdout=asyncio.subprocess.PIPE,
@@ -76,7 +73,6 @@ async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder:
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
                 returncode = proc.returncode
             else:
-                # Copy script to cluster
                 scp_cmd = [
                     "scp", script_path, f"{config.cluster_user}@{config.cluster_host}:/tmp/network_assessment.sh"
                 ]
@@ -89,7 +85,7 @@ async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder:
                 if scp_process.returncode != 0:
                     return "❌ Failed to upload assessment script to cluster"
 
-                # Execute script on cluster
+                # exec script on cluster
                 ssh_cmd = [
                     "ssh",
                     f"{config.cluster_user}@{config.cluster_host}",
@@ -103,23 +99,21 @@ async def network_assessment_tool(config: NetworkAssessmentToolConfig, _builder:
                 stdout, stderr = await asyncio.wait_for(ssh_process.communicate(), timeout=config.timeout)
                 returncode = ssh_process.returncode
 
-            # Clean up local script
             os.unlink(script_path)
 
             if returncode == 0:
                 s_out = stdout.decode('utf-8', errors="replace")
-                # Network assessment results will be available via existing node assessment symlink
 
                 location = "locally" if config.cluster_host == "localhost" else "on cluster"
                 return f"""✅ Network assessment completed successfully!
 
-📋 Assessment Output:
+Assessment Output:
 {s_out}
 
-📁 Results saved {location} and available via existing node assessment symlink.
+Results saved {location} and available via existing node assessment symlink.
 Use the network_results_reader tool to analyze the results.
 
-🔍 Next steps:
+Next steps:
 1. Use network_results_reader to parse the assessment data
 2. Compare current state with desired configuration
 3. Generate remediation plan based on differences
@@ -157,11 +151,9 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
         import asyncio
 
         try:
-            # Handle default query
             if not query or query.strip() == "":
                 query = "summary"
 
-            # Determine which files to read based on query
             if "summary" in query.lower():
                 files_to_read = ["00_SUMMARY.txt"]
             elif "device" in query.lower():
@@ -186,10 +178,8 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
 
             results = []
 
-            # Determine assessment directory (explicit path, stable symlink, or latest)
             latest_dir = None
 
-            # 1. Check for explicit directory in query
             explicit = None
             for token in query.split():
                 if token.startswith("/tmp/network_assessment_"):
@@ -197,15 +187,12 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                     break
 
             if explicit:
-                # Use explicit directory path
                 latest_dir = explicit
                 logger.info(f"Using explicit directory from query: {latest_dir}")
             else:
-                # 2. Use existing node assessment symlink (created by DGX agent)
                 if config.cluster_host == "localhost":
                     import os
 
-                    # Use the existing node assessment symlink that already exists
                     symlink_path = "/tmp/node_assessment_latest"
                     if os.path.exists(symlink_path) and os.path.isdir(symlink_path):
                         latest_dir = symlink_path
@@ -213,7 +200,6 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                     else:
                         logger.warning("No node assessment symlink found. Run node assessment first.")
                 else:
-                    # Check remote symlink
                     symlink_cmd = [
                         "ssh",
                         f"{config.cluster_user}@{config.cluster_host}",
@@ -227,7 +213,6 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                         latest_dir = symlink_stdout.decode('utf-8').strip()
                         logger.info(f"Using remote stable symlink: {latest_dir}")
 
-                # 3. Fall back to finding latest directory by timestamp
                 if not latest_dir:
                     latest_dir_cmd = [
                         "ssh",
@@ -247,7 +232,6 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
 
             if latest_dir:
                 if config.cluster_host == "localhost":
-                    # Local file reading
                     from pathlib import Path
                     for file_pattern in files_to_read:
                         for p in Path(latest_dir).glob(file_pattern):
@@ -257,7 +241,6 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
                             except Exception:
                                 pass
                 else:
-                    # Remote file reading via SSH
                     for file_pattern in files_to_read:
                         ssh_cmd = [
                             "ssh",
@@ -289,7 +272,7 @@ async def network_results_reader(config: NetworkResultsReaderConfig, _builder: B
 
 {chr(10).join(results)}
 
-💡 Analysis complete! Use this data to:
+Analysis complete! Use this data to:
 1. Compare with desired state configuration
 2. Identify configuration gaps
 3. Plan remediation steps
@@ -322,20 +305,17 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
     async def _extract_network_config_from_yaml(query: str) -> str:
         """Extract network configuration directly from YAML config file"""
         try:
-            # Use the config path, not the input parameter
             networking_docs_path = config.networking_docs_path
 
-            # If it's already an absolute path to a file, use it directly
             if networking_docs_path.endswith('.yaml') and os.path.isfile(networking_docs_path):
                 config_file = networking_docs_path
             else:
-                # Otherwise, look for config files in the directory
                 config_files = glob.glob(os.path.join(networking_docs_path, "*_config.yaml"))
                 if not config_files:
                     return f"No network config YAML found in {networking_docs_path}/"
                 config_file = config_files[0]
 
-            logger.info(f"📋 Reading network config from: {config_file}")
+            logger.info(f"Reading network config from: {config_file}")
 
             with open(config_file, 'r') as f:
                 config_data = yaml.safe_load(f)
@@ -343,7 +323,6 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
             facts = []
             cluster_name = "unknown"
 
-            # Extract cluster name
             if 'metadata' in config_data and 'cluster_name' in config_data['metadata']:
                 cluster_name = config_data['metadata']['cluster_name']
             elif 'cluster' in config_data and 'name' in config_data['cluster']:
@@ -351,9 +330,7 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
 
             facts.append(f"CLUSTER: {cluster_name}")
 
-            # Parse network fabrics (handles both schecker and demeter formats)
             if 'network_fabrics' in config_data:
-                # Demeter format: network_fabrics.management.subnet
                 for fabric_name, fabric_config in config_data['network_fabrics'].items():
                     name = fabric_config.get('name', fabric_name)
                     subnet = fabric_config.get('subnet')
@@ -366,7 +343,6 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
                             f"NETWORK: {name} uses {subnet} gateway {gateway} type {fabric_type}{interface_str}")
 
             elif 'networks' in config_data:
-                # Schecker format: networks.internal.subnet
                 for net_name, net_config in config_data['networks'].items():
                     name = net_config.get('name')
                     subnet = net_config.get('subnet')
@@ -376,12 +352,10 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
                         interface_str = f" interface {interface}" if interface else ""
                         facts.append(f"NETWORK: {name} uses {subnet} gateway {gateway}{interface_str}")
 
-            # Parse node definitions for head node and sample workers
             if 'nodes' in config_data:
-                # Extract head node and first few worker nodes
                 node_count = 0
                 for node_name, node_config in config_data['nodes'].items():
-                    if node_count >= 5:  # Limit to first 5 nodes
+                    if node_count >= 5:
                         break
                     if 'networks' in node_config:
                         for net_type, net_info in node_config['networks'].items():
@@ -393,7 +367,6 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
                         facts.append(f"NODE: {hostname}")
                     node_count += 1
 
-            # Parse infrastructure nodes if present
             if 'infrastructure' in config_data:
                 infra = config_data['infrastructure']
                 if 'management_nodes' in infra:
@@ -401,12 +374,11 @@ async def network_config_extractor(config: NetworkConfigExtractorConfig, _builde
                         if 'ip' in node_config:
                             facts.append(f"MGMT_NODE: {node_name} = {node_config['ip']}")
 
-            # If no detailed network info was found, try to extract from other sections
             if len([f for f in facts if f.startswith('NETWORK:')]) == 0:
                 facts.append("WARNING: No network configuration found in YAML")
 
             result = '\n'.join(facts)
-            logger.info(f"📋 Extracted {len(facts)} configuration facts from YAML")
+            logger.info(f"Extracted {len(facts)} configuration facts from YAML")
             return result
 
         except Exception as e:
@@ -442,7 +414,6 @@ async def network_ansible_plan(config: NetworkAnsiblePlanConfig, builder: Builde
 
     async def _plan(input_payload: str) -> str:
         """Generate Ansible execution plan with tags and nodes"""
-        # Gather context from other tools
         try:
             extractor = builder.get_function("network_config_extractor")
             golden_facts = await asyncio.wait_for(extractor.ainvoke("extract network configuration"), timeout=60)
@@ -459,11 +430,9 @@ async def network_ansible_plan(config: NetworkAnsiblePlanConfig, builder: Builde
             logger.warning("Assessment unavailable: %s", e)
             assessment_text = "(assessment unavailable)"
 
-        # Get allowed nodes from environment (set by orchestrator)
         allowed_nodes = os.getenv("AIQ_ALLOWED_NODES", "")
         allowed_nodes_list = [n.strip() for n in allowed_nodes.split(",") if n.strip()]
 
-        # Build planning prompt
         guardrails = [
             "Do not touch the SSH/mgmt NIC unless explicitly stated.",
             "Use nmstate checkpoint with rollback.",
@@ -505,18 +474,16 @@ Return only valid JSON with the required structure.
             chain = prompt_template | llm | StrOutputParser()
 
             logger.info("Invoking LLM for Ansible planning")
-            raw_response = await asyncio.wait_for(
-                chain.ainvoke({
-                    "guardrails": "\n- ".join(guardrails),
-                    "tag_hint": tag_hint,
-                    "req_hint": req_hint,
-                    "allowed_nodes": ', '.join(allowed_nodes_list) if allowed_nodes_list else '(none specified)',
-                    "assessment_text": assessment_text[:18000],  # Truncate to avoid token limits
-                    "golden_facts": golden_facts[:8000]
-                }),
-                timeout=90)
+            raw_response = await asyncio.wait_for(chain.ainvoke({
+                "guardrails": "\n- ".join(guardrails),
+                "tag_hint": tag_hint,
+                "req_hint": req_hint,
+                "allowed_nodes": ', '.join(allowed_nodes_list) if allowed_nodes_list else '(none specified)',
+                "assessment_text": assessment_text[:18000],
+                "golden_facts": golden_facts[:8000]
+            }),
+                                                  timeout=90)
 
-            # Extract JSON from response
             def extract_json(text: str) -> dict:
                 if isinstance(text, dict):
                     return text
@@ -530,7 +497,6 @@ Return only valid JSON with the required structure.
             data = extract_json(raw_response)
             logger.info("✅ LLM planning completed successfully")
 
-            # Enforce allow/require lists
             tags = data.get("tags", [])
             if config.allowed_tags:
                 original_count = len(tags)
@@ -545,7 +511,6 @@ Return only valid JSON with the required structure.
                         logger.info("Added required tag: %s", t)
             data["tags"] = tags
 
-            # Intersect limit_hosts with ALLOWED_NODES
             limit_hosts = data.get("limit_hosts", [])
             if allowed_nodes_list:
                 original_hosts = limit_hosts[:]
@@ -554,7 +519,6 @@ Return only valid JSON with the required structure.
                     logger.info("Limited hosts to allowed nodes: %s", limit_hosts)
             data["limit_hosts"] = limit_hosts
 
-            # Ensure extra_vars has defaults
             extra_vars = data.get("extra_vars", {}) or {}
             extra_vars.setdefault("nm_checkpoint_timeout", config.default_checkpoint_timeout)
             data["extra_vars"] = extra_vars
@@ -565,7 +529,6 @@ Return only valid JSON with the required structure.
 
         except Exception as e:
             logger.error("❌ Ansible planning failed: %s", e)
-            # Fallback plan
             fallback_plan = {
                 "tags": config.required_tags or ["connectivity_check"],
                 "limit_hosts": allowed_nodes_list,
@@ -845,7 +808,7 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
         final_output: str
         ansible_plan_json: str
 
-    # Routing (regex-first)
+    # routing
     def classify(user_input: str) -> tuple[str, str, list[str]]:
         ui = user_input or ""
         ui_l = ui.lower()
@@ -898,7 +861,6 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
     async def assess(state: State):
         logger.info("assess: Starting network assessment")
 
-        # Run assessment
         try:
             assess_tool = builder.get_function("network_assessment_tool")
             logger.info("assess: Executing network_assessment_tool")
@@ -909,7 +871,6 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             logger.error("❌ assess: Network assessment failed: %s", e)
             assess_out = f"❌ Network assessment error: {e}"
 
-        # Extract results directory from assessment output
         results_dir = ""
         if assess_out:
             m = re.search(r"(/tmp/network_assessment_[0-9_]+)", assess_out)
@@ -919,12 +880,10 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             else:
                 logger.warning("assess: Could not extract results directory from assessment output")
 
-        # Read results with explicit directory if available
         results_text = ""
         try:
             reader = builder.get_function("network_results_reader")
             rq = state.get("results_query", "overview") or "overview"
-            # Include directory in query if we found one
             rq_with_dir = f"{rq} {results_dir}" if results_dir else rq
             if results_dir:
                 logger.info("assess: Reading results with query '%s' from directory %s", rq, results_dir)
@@ -941,7 +900,6 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
     async def summarize(state: State):
         logger.info("summarize: Starting LLM-based assessment summarization")
 
-        # Summarize assessment results
         try:
             llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
             logger.info("✅ summarize: LLM acquired successfully")
@@ -974,7 +932,6 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
     async def generate(state: State):
         logger.info("generate: Starting BCM command generation")
 
-        # Build context and ask BCM RAG/LLM for commands
         try:
             llm = await builder.get_llm(config.reasoning_llm_name, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
             logger.info("✅ generate: LLM acquired successfully")
@@ -982,7 +939,6 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             logger.error("❌ generate: Could not acquire LLM: %s", e)
             return {**state, "bcm_commands": f"❌ Could not acquire LLM: {e}"}
 
-        # Desired config from YAML
         logger.info("generate: Extracting desired configuration")
         desired = ""
         try:
@@ -993,7 +949,6 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             logger.warning("generate: Desired config extraction failed: %s", e)
             desired = f"(desired config unavailable: {e})"
 
-        # Optional BCM docs RAG (kept simple; returns plain text guidance)
         logger.info("generate: Querying BCM documentation RAG")
         bcm_docs = ""
         try:
@@ -1024,18 +979,15 @@ async def network_orchestrator(config: NetworkOrchestratorConfig, builder: Build
             logger.error("❌ generate: LLM command generation failed: %s", e)
             llm_out = f"[Error generating commands: {e}]"
 
-        # Extract rationale
         m = re.search(r"Rationale:\s*(.+?)(?:\n\s*Commands:|\Z)", llm_out, flags=re.S | re.I)
         rationale = m.group(1).strip() if m else ""
         logger.info("generate: Extracted rationale: %s chars", len(rationale))
 
-        # Extract and filter commands
         extracted = _net_extract_cmsh_commands(llm_out)
         filtered = _net_filter_placeholders(extracted)
         logger.info("generate: Extracted %d commands, filtered to %d valid commands", len(extracted), len(filtered))
 
         if state.get("action_type") == "reset_network" and allowed_nodes:
-            # Soft coverage nudge: warn if no commands for some requested nodes
             present = set()
             for c in filtered:
                 match = re.search(r'device use\s+(\S+)', c)

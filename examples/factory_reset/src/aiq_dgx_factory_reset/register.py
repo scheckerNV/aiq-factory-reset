@@ -1,23 +1,18 @@
 """
 BCM Documentation RAG with LlamaIndex
+HITL Code Approval and Command Executor
 
 This module provides accurate retrieval of BCM (Bright Cluster Manager) documentation
 using LlamaIndex, LlamaParse, and NVIDIA embeddings for high-quality RAG responses.
+It also provides a tool to execute BCM commands with optional validation and human approval.
 """
 
-import asyncio
-import glob
 import logging
 import os
-import re
 from pathlib import Path
-from typing import TypedDict
-
-import yaml
 from pydantic import Field
 
 from aiq.builder.builder import Builder
-from aiq.builder.framework_enum import LLMFrameworkEnum
 from aiq.builder.function_info import FunctionInfo
 from aiq.cli.register_workflow import register_function
 from aiq.data_models.function import FunctionBaseConfig
@@ -55,7 +50,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             return f"❌ BCM documentation not found at {docs_path}"
 
         try:
-            # Import LlamaIndex dependencies
             from llama_index.core import Document
             from llama_index.core import Settings
             from llama_index.core import StorageContext
@@ -65,7 +59,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             from llama_index.llms.nvidia import NVIDIA
             from llama_parse import LlamaParse
 
-            # Set up API keys
             nvidia_api_key = config.nvidia_api_key or os.getenv("NVIDIA_API_KEY")
             llama_api_key = config.llama_cloud_api_key or os.getenv("LLAMA_CLOUD_API_KEY")
 
@@ -80,10 +73,8 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             os.environ["NVIDIA_API_KEY"] = nvidia_api_key
             os.environ["LLAMA_CLOUD_API_KEY"] = llama_api_key
 
-            # Configure LlamaIndex with NVIDIA models for accuracy
             Settings.llm = NVIDIA(model="meta/llama-3.3-70b-instruct")
             Settings.embed_model = NVIDIAEmbedding(model="nvidia/llama-3.2-nv-embedqa-1b-v2", truncate="END")
-            # Enable debug/tracing so reasoning signals are visible in logs (optional)
             try:
                 from llama_index.core.callbacks import CallbackManager
                 from llama_index.core.callbacks import LlamaDebugHandler
@@ -91,12 +82,10 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                 Settings.callback_manager = CallbackManager(
                     [LlamaDebugHandler(print_trace_on_end=True), TokenCountingHandler()])
             except Exception:
-                # Debug handlers are optional; ignore if unavailable
                 pass
 
             logger.info("Processing BCM documentation from %s", docs_path)
 
-            # Check for existing index
             docstore_path = os.path.join(persist_dir, "docstore.json")
             if os.path.exists(docstore_path):
                 logger.info("Loading existing BCM index...")
@@ -109,7 +98,7 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                 documents = []
                 docs_path_obj = Path(docs_path)
 
-                # Process PDF files with LlamaParse for high-quality extraction
+                # Process PDF files with LlamaParse
                 pdf_files = list(docs_path_obj.glob("*.pdf"))
                 if pdf_files and llama_api_key:
                     logger.info("Found %d PDF files, processing with LlamaParse...", len(pdf_files))
@@ -129,7 +118,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                             documents.extend(pdf_docs)
                             logger.info("Successfully processed %s (%d documents)", pdf_file.name, len(pdf_docs))
 
-                            # Clean up
                             del file_parser
 
                         except Exception as e:
@@ -140,7 +128,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                     logger.info("Found %d PDF files but no LlamaCloud API key provided, skipping PDF processing",
                                 len(pdf_files))
 
-                # Process markdown files if any
                 md_files = list(docs_path_obj.glob("*.md"))
                 if md_files:
                     logger.info("Found %d markdown files...", len(md_files))
@@ -164,7 +151,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                 index.storage_context.persist(persist_dir=persist_dir)
                 logger.info("Index created and persisted successfully")
 
-            # Create query engine optimized for accuracy
             query_engine = index.as_query_engine(similarity_top_k=config.similarity_top_k,
                                                  response_mode=config.response_mode,
                                                  verbose=True)
@@ -172,12 +158,10 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
             logger.info("Executing query: %s", query)
             response = query_engine.query(query)
 
-            # Format the response with source information
-            result = "🤖 **BCM Documentation Expert**\n\n"
+            result = "**BCM Documentation Expert**\n\n"
             result += f"**Query:** {query}\n\n"
             result += f"**Answer:**\n{str(response)}\n\n"
 
-            # Add source information if available
             if hasattr(response, 'source_nodes') and response.source_nodes:
                 result += "**Sources:**\n"
                 for i, node in enumerate(response.source_nodes[:3], 1):  # Show top 3 sources
@@ -185,7 +169,6 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                     score = getattr(node, 'score', 'N/A')
                     result += f"{i}. {source} (relevance: {score:.3f})\n"
                 result += "\n"
-                # Show brief context snippets to reveal what informed the answer
                 result += "**Top retrieved context (snippets):**\n"
                 for i, node in enumerate(response.source_nodes[:3], 1):
                     source = node.metadata.get('file_name', 'Unknown')
@@ -201,8 +184,8 @@ async def bcm_documentation_rag(config: BCMDocumentationRAGConfig, _builder: Bui
                     if snippet:
                         result += f"{i}. {source}: {snippet}…\n"
 
-            result += "📋 **Source:** BCM Administration Manual\n\n"
-            result += "⚠️  **Note:** Please verify commands in your specific BCM environment before execution."
+            result += "**Source:** BCM Administration Manual\n\n"
+            result += "**Note:** Please verify commands in your specific BCM environment before execution."
 
             return result
 
@@ -285,7 +268,6 @@ async def code_execution_with_approval(config: CodeExecutionWithApprovalConfig, 
         if not bcm_commands or not bcm_commands.strip():
             return "❌ No BCM commands provided for execution"
 
-        # Optional LLM validation step (best-effort)
         validation_notes = ""
         if config.coder_llm_name:
             try:
@@ -298,7 +280,7 @@ async def code_execution_with_approval(config: CodeExecutionWithApprovalConfig, 
             except Exception:
                 validation_notes = "\n🔎 Validation (coder): skipped (LLM unavailable)\n"
 
-        # Human approval via configured HITL function
+        # human approval
         try:
             approval_fn = builder.get_function(config.hitl_approval_fn)
         except Exception:
@@ -315,7 +297,6 @@ async def code_execution_with_approval(config: CodeExecutionWithApprovalConfig, 
             return ("✅ Dry run approval complete. Commands validated and approved, but NOT executed.\n\n"
                     "Approved BCM commands:\n" + bcm_commands + validation_notes)
 
-        # Live execution (local or remote via SSH)
         try:
             script_content = ("#!/bin/bash\n"
                               "set -e\n"
@@ -363,7 +344,6 @@ async def code_execution_with_approval(config: CodeExecutionWithApprovalConfig, 
                                                             stderr=asyncio.subprocess.PIPE)
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
 
-            # Clean up local script
             try:
                 os.unlink(script_path)
             except Exception:
@@ -388,7 +368,6 @@ async def code_execution_with_approval(config: CodeExecutionWithApprovalConfig, 
 
 print("✅ BCM Code Execution with Approval tool registered successfully")
 
-# Import networking and DGX modules to ensure all functions are registered
 try:
     from . import dgx_register  # noqa: F401
     from . import network_register  # noqa: F401

@@ -1,8 +1,106 @@
-# Cluster DCGM Monitoring: Setup and Usage Guide
+# DGX Factory Reset Multi-Agent System
 
-This guide shows how to set up cluster-wide DCGM (Data Center GPU Manager) monitoring and analysis using the NeMo Agent toolkit. The tools work with BCM-managed GPU clusters (DGX, GB300, H100, etc.) and provide comprehensive GPU telemetry through Prometheus and Grafana.
+This comprehensive multi-agent system provides automated infrastructure management for GPU clusters using the NeMo Agent toolkit. The system includes three specialized agents for different aspects of cluster management:
+
+- **DGX Agent**: Hardware assessment, node and power management, and cluster operations using BCM
+- **Network Agent**: Network configuration, validation, and remediation using Ansible
+- **Cluster DCGM Agent**: GPU monitoring and telemetry collection across the cluster
 
 ## Prerequisites
+
+### Install Dependencies
+
+First, install the factory reset package and its dependencies:
+
+```bash
+cd examples/factory_reset
+uv pip install -e .
+```
+
+This will install all required dependencies including the NeMo Agent toolkit, BCM tools, networking utilities, and DCGM components.
+
+### API Keys and Model Configuration
+
+For the **DGX Agent** and **Network Agent**, you need:
+
+#### Option 1: Cloud APIs
+```bash
+# Required for NVIDIA NIM services
+export NVIDIA_API_KEY="your-nvidia-api-key"
+
+# Required for LlamaIndex parsing and embeddings
+export LLAMA_CLOUD_API_KEY="your-llama-cloud-api-key"
+```
+
+Get your API keys:
+- **NVIDIA API Key**: Visit [build.nvidia.com](https://build.nvidia.com/) and create an account
+- **Llama Cloud API Key**: Visit [cloud.llamaindex.ai](https://cloud.llamaindex.ai/) and create an account
+
+#### Option 2: Locally Hosted Models
+If you prefer to use locally hosted models, update the LLM configurations in the agent YAML files to point to your local model endpoints instead of NVIDIA NIM services.
+
+## Agent Usage Guide
+
+### DGX Agent - Hardware Management
+
+The DGX Agent handles hardware assessment, power management, and BCM cluster operations.
+
+**Example Usage:**
+```bash
+# Power management
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dgx_agent.yml \
+  --input "Give me the BCM cmsh commands to power on node002"
+
+# Node assessment
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dgx_agent.yml \
+  --input "Assess the health of all nodes in the cluster"
+
+# Hardware diagnostics
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/dgx_agent.yml \
+  --input "Check hardware status and generate remediation steps for node003"
+```
+
+### Network Agent - Network Configuration
+
+The Network Agent manages network configuration, validation, and remediation using Ansible automation.
+
+**Example Usage:**
+```bash
+# Network reset and configuration
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/network_agent.yml \
+  --input "Reset networking for nodes node003 and node004"
+
+# Network validation
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/network_agent.yml \
+  --input "Validate network configuration for all nodes"
+
+# Interface configuration
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/network_agent.yml \
+  --input "Configure network interfaces according to golden configuration"
+```
+
+### Cluster DCGM Agent - GPU Monitoring
+
+The Cluster DCGM Agent provides comprehensive GPU monitoring and telemetry collection across the entire cluster using Prometheus and Grafana.
+
+**Example Usage:**
+```bash
+# Get cluster-wide GPU status
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_gpu_status"
+
+# Enable health monitoring across cluster
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_gpu_enable_health systems=all"
+
+# Run diagnostics on specific nodes
+aiq run --config_file examples/factory_reset/src/aiq_dgx_factory_reset/configs/cluster_dcgm_agent.yml \
+  --input "cluster_gpu_diagnostics level=r2 nodes=node001,node002"
+```
+
+## DCGM Monitoring Setup and Configuration
+
+### Prerequisites
 
 ### GPU Compute Nodes
 Each GPU compute node requires:
