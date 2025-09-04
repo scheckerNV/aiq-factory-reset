@@ -12,11 +12,7 @@ functions:
     executor_fn: code_execution_with_approval
     include_llm_rationale: true
     include_prompts_in_output: false  # Set to true for debugging
-    # Optional: override prompts
-    # commands_prompt: "Your custom command generation prompt..."
-    # commands_prompt_path: "/path/to/custom/prompt.txt"
 
-  # Network Assessment Tool (required dependency)
   network_assessment_tool:
     _type: aiq_dgx_factory_reset/network_assessment_tool
     cluster_host: "localhost"  # Replace with your cluster IP/hostname
@@ -26,16 +22,15 @@ functions:
   # Network Results Reader (required dependency)
   network_results_reader:
     _type: aiq_dgx_factory_reset/network_results_reader
-    cluster_host: "localhost"  # Same as assessment tool
-    cluster_user: "root"  # Same as assessment tool
-    results_directory: "/tmp/node_assessment_*"  # Use existing node assessment results
+    cluster_host: "localhost"
+    cluster_user: "root"
+    results_directory: "/tmp/node_assessment_*"
 
   # Network Config Extractor (required dependency)
   network_config_extractor:
     _type: aiq_dgx_factory_reset/network_config_extractor
     networking_docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/networking_expert"
 
-  # BCM Documentation RAG (required dependency)
   bcm_documentation_rag:
     _type: aiq_dgx_factory_reset/bcm_documentation_rag
     docs_path: "examples/factory_reset/src/aiq_dgx_factory_reset/docs/BCM_expert"
@@ -71,20 +66,18 @@ functions:
     timeout: 1800
     env_disable_hostkey_check: true
 
-  # Code Execution with Approval (required dependency)
   code_execution_with_approval:
     _type: aiq_dgx_factory_reset/code_execution_with_approval
-    cluster_host: "localhost"  # Same as network tools
-    cluster_user: "root"  # Same as network tools
+    cluster_host: "localhost"
+    cluster_user: "root"
     timeout: 600
-    dry_run: true  # Set to false for live execution (DANGEROUS!)
-    coder_llm_name: reasoning_llm  # Optional: LLM validation of commands
+    dry_run: true  # Set to false for live execution
+    coder_llm_name: reasoning_llm
     hitl_approval_fn: hitl_code_approval
 
-  # Human-in-the-Loop Approval (required by code_execution_with_approval)
   hitl_code_approval:
     _type: aiq_dgx_factory_reset/hitl_code_approval
-    prompt: "⚠️ NETWORK FACTORY RESET ⚠️\n\nPlease review the following BCM networking commands carefully:"
+    prompt: "NETWORK FACTORY RESET \n\nPlease review the following BCM networking commands carefully:"
 
 llms:
   reasoning_llm:
@@ -93,7 +86,6 @@ llms:
     max_tokens: 4096
     temperature: 0.1
 
-# Set your main workflow to use the new orchestrator
 workflow:
   _type: aiq_dgx_factory_reset/network_orchestrator
   reasoning_llm_name: reasoning_llm
