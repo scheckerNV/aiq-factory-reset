@@ -21,6 +21,17 @@ limitations under the License.
 
 NVIDIA NeMo Agent toolkit is a flexible, lightweight, and unifying library that allows you to easily connect existing enterprise agents to data sources and tools across any framework.
 
+## Factory Reset Example - Multi-Agent Infrastructure Management
+
+**Looking for a complete enterprise example?** Check out the **Factory Reset** multi-agent system in [`examples/factory_reset/`](./examples/factory_reset/README.md).
+
+This comprehensive example demonstrates a network of specialized agents designed to manage large-scale infrastructure, including:
+- **DGX Agent**: Hardware assessment, power management, and cluster operations
+- **Network Agent**: Network configuration, validation, and remediation using Ansible
+- **DCGM Agent**: GPU monitoring and cluster-wide DCGM management
+
+The factory reset system showcases real-world enterprise agent orchestration, combining multiple frameworks and tools to automate complex infrastructure management tasks.
+
 > [!NOTE]
 > NeMo Agent toolkit was previously known as the Agent Intelligence (AIQ) toolkit, and <!-- vale off -->AgentIQ<!-- vale on -->. The library was renamed to better reflect the purpose of the toolkit and to align with the NVIDIA NeMo family of products. The core technologies, performance and roadmap remain unchanged and the API is fully compatible with previous releases.
 >
